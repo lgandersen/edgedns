@@ -1,0 +1,15 @@
+{application, edge_core, [
+    {description, "EdgeDNS: Core Application and Utilities."},
+    {vsn, "0.1.0"},
+    {modules, []},
+    {registered, []},
+    {mod, {edge_core_app, []}},
+    {applications, [
+        kernel,
+        lager,
+        sasl,
+        stdlib
+   ]}
+]}.
+
+%% vim: ft=erlang :
