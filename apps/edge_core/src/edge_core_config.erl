@@ -7,12 +7,32 @@
 
 %% API.
 -export([port/0,
-         active_message_count/0
+         blocking_threshold/0,
+         active_message_count/0,
+         port_range_resolvers/0,
+         nameserver/0,
+         decay_rate/0
         ]).
 
 -spec port() -> inet:port_number().
 port() ->
     get_value(port).
+
+-spec blocking_threshold() -> pos_integer().
+blocking_threshold() ->
+    get_value(blocking_threshold).
+
+-spec decay_rate() -> float().
+decay_rate() ->
+    get_value(decay_rate).
+
+-spec port_range_resolvers() -> {inet:port(), inet:port()}.
+port_range_resolvers() ->
+    get_value(port_range_resolvers).
+
+-spec nameserver() -> {inet:ip(), inet:port()}.
+nameserver() ->
+    get_value(nameserver).
 
 -spec active_message_count() -> non_neg_integer().
 active_message_count() ->

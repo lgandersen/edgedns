@@ -3,6 +3,17 @@
 %%% Use of this source code is governed by a BSD-style
 %%% license that can be found in the LICENSE file.
 %%%
+%%%-------------------------------------------------------------------
+%%% @author Alexander Færøy & Lasse Grinderslev Andersen
+%%% @doc UDP Listener
+%%%
+%%% This server listens to incoming DNS requests, forwards them to
+%%% the resolver processes and relay DNS repsonses back to right
+%%% recipients.
+%%%
+%%% @end
+%%%-------------------------------------------------------------------
+
 -module(edge_core_udp_listener).
 -behaviour(gen_server).
 
@@ -21,8 +32,10 @@
 -define(SERVER, ?MODULE).
 
 -record(state, {
-          socket   :: gen_udp:socket(),
-          active_n :: non_neg_integer()
+          socket    :: gen_udp:socket(),
+          active_n  :: non_neg_integer(),
+          next_resolver :: non_neg_integer(),
+          resolvers :: [pid()]
     }).
 
 -include_lib("kernel/src/inet_dns.hrl").
@@ -35,10 +48,35 @@ start_link() ->
 init(_Args) ->
     Port   = edge_core_config:port(),
     Active = edge_core_config:active_message_count(),
+
+    {DNSServerIP, DNSServerPort} = edge_core_config:nameserver(),
+
+    %% Ports used to talk to the DNS server
+    {ResolverPortStart, ResolverPortEnd} = edge_core_config:port_range_resolvers(),
+    ConnectionPorts = lists:seq(ResolverPortStart, ResolverPortEnd),
+    NResolvers = length(ConnectionPorts),
+
+    %% Start our resolver processes that talks to the DNSServer
+    ResolverPids = lists:map(
+                  fun(LocalPort) ->
+                          {ok, Pid} = edge_core_resolver:start_link(LocalPort, DNSServerIP, DNSServerPort),
+                          Pid
+                  end, ConnectionPorts),
+
+    %% Make map to use for round robin distribution of queries to resolver processes
+    Resolvers = maps:from_list(
+                  lists:zip(
+                    lists:seq(0, NResolvers - 1),
+                    ResolverPids
+                   )),
+
     case gen_udp:open(Port, [binary, inet, {active, Active}, {reuseaddr, true}]) of
         {ok, Socket} ->
-            {ok, #state { socket   = Socket,
-                          active_n = Active }};
+            lager:notice("Listening to incoming DNS requests on port ~p", [Port]),
+            {ok, #state { resolvers     = Resolvers,
+                          next_resolver = 0,
+                          socket        = Socket,
+                          active_n      = Active }};
 
         {error, _} = Error ->
             Error
@@ -55,22 +93,16 @@ handle_cast(Message, State) ->
     {noreply, State}.
 
 %% @private
-handle_info({udp, _, IP, Port, Packet}, #state { socket = Socket } = State) ->
-    case inet_dns:decode(Packet) of
-        {ok, #dns_rec { header = #dns_header { id = ID } }= Data} ->
+handle_info({udp, _, IP, Port, Packet}, #state{resolvers = Resolvers, next_resolver = Resolver2Use} = StateData) ->
+    lager:warning("Incoming request: ~p", [IP]),
+    Resolver = maps:get(Resolver2Use, Resolvers),
+    edge_core_resolver:resolve(Resolver, IP, Port, Packet),
+    NextResolver2Use = (Resolver2Use + 1) rem maps:size(Resolvers),
+    {noreply, StateData#state { next_resolver = NextResolver2Use }};
 
-            case inet_res:resolve("foobar.com", in, a, [{nameservers, [ {{8,8,8,8}, 53} ]}]) of
-                {ok, #dns_rec{ header = Header } = AResult} ->
-                    Result = AResult#dns_rec{ header = Header#dns_header { id = ID } },
-                    Response = inet_dns:encode(Result),
-                    gen_udp:send(Socket, IP, Port, Response);
-
-                _ -> ok
-            end;
-
-        {error, Reason} ->
-            lager:warning("Unable to decode packet: ~p", [Reason])
-    end,
+handle_info({response_received, {IP, Port, Response}}, #state { socket = Socket } = State) ->
+    lager:notice("Response received, relaying answer to client"),
+    gen_udp:send(Socket, IP, Port, Response),
     {noreply, State};
 
 handle_info({udp_passive, _}, #state { socket = Socket, active_n = ActiveN } = State) ->
