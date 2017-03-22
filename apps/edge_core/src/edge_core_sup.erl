@@ -26,5 +26,6 @@ start_link() ->
 init([]) ->
     {ok, {{one_for_one, 10, 10}, [
         ?CHILD(edge_core_udp_listener, worker),
+        ?CHILD(edge_core_traffic_logger, worker),
         ?CHILD(edge_core_traffic_monitor, worker)
     ]}}.

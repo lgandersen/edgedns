@@ -133,6 +133,7 @@ process_response(Response, #state { socket     = Socket,
                                     request    = {IP, Port, Request, Caller} }) ->
     Caller ! {response_received, {IP, Port, Response}},
     inet:setopts(Socket, [{active, once}]),
+    edge_core_traffic_logger:log_query(IP, Port, Request, Response),
     edge_core_traffic_monitor:register_lookup(IP, score(Request, Response)).
 
 
@@ -146,8 +147,7 @@ process_queue(#state { dns_server         = DNSServer,
                        blocking_threshold = BlockingThreshold } = StateData) when length(Queue) > 0 ->
 
     %% We have more requests in our queue so process the next one
-    {IP, _, Packet, _} = NewRequest = lists:last(Queue),
-    %% FIXME This is the place to make a call to another process that handles logging
+    {IP, _Port, Packet, _Caller} = NewRequest = lists:last(Queue),
 
     %% Update our state
     NewQueue = lists:droplast(Queue),
