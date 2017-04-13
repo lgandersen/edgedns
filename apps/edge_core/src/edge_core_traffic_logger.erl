@@ -25,7 +25,7 @@
 
 -define(LOG_TABLE, log_table).
 
--record(state, {table}).
+-record(state, {table, log_file}).
 
 %%%===================================================================
 %%% API
@@ -49,8 +49,9 @@ log_query(IP, Port, Query, Response) ->
 
 %% @private
 init([]) ->
-    {ok, PacketLog} = dets:open_file(?LOG_TABLE, [{type, duplicate_bag}, {access, read_write}, {keypos, 1}]),
-    {ok, #state { table = PacketLog }}.
+    %{ok, PacketLog} = dets:open_file(?LOG_TABLE, [{type, duplicate_bag}, {access, read_write}, {keypos, 1}, {file, "log.table"}]),
+    {ok, LogFile} = file:open("log.csv", [write]),
+    {ok, #state { log_file = LogFile }}.
 
 %% @private
 handle_call(_Request, _From, State) ->
@@ -58,9 +59,10 @@ handle_call(_Request, _From, State) ->
     {reply, Reply, State}.
 
 %% @private
-handle_cast({log_query, IP, Port, Query, Response}, #state { table = PacketLog } = State) ->
-    lager:notice("Saving query to log"),
-    ok = dets:insert(PacketLog, [{erlang:system_time(milli_seconds), IP, Port, Query, Response}]),
+handle_cast({log_query, IP, _Port, Query, Response}, #state { table = _PacketLog, log_file = LogFile } = State) ->
+    %lager:notice("Saving query to log"),
+    io:fwrite(LogFile, "~p|~p|~p|~p~n", [IP, erlang:system_time(milli_seconds), size(Query), size(Response)]),
+    %ok = dets:insert(PacketLog, [{erlang:system_time(milli_seconds), IP, Port, Query, Response}]),
     {noreply, State};
 
 handle_cast(_Msg, State) ->
@@ -71,8 +73,8 @@ handle_info(_Info, State) ->
     {noreply, State}.
 
 %% @private
-terminate(_Reason, #state { table = PacketLog }) ->
-    dets:close(PacketLog),
+terminate(_Reason, #state { table = _PacketLog }) ->
+    %dets:close(PacketLog),
     ok.
 
 %% @private

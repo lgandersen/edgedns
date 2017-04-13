@@ -101,8 +101,9 @@ handle_info({udp, _, IP, Port, Packet}, #state{resolvers = Resolvers, next_resol
     {noreply, StateData#state { next_resolver = NextResolver2Use }};
 
 handle_info({response_received, {IP, Port, Response}}, #state { socket = Socket } = State) ->
-    lager:notice("Response received, relaying answer to client"),
-    gen_udp:send(Socket, IP, Port, Response),
+    % FIXME this is only while debugging. No need to send attack-traffic
+    %lager:notice("Response received, relaying answer to client"),
+    %gen_udp:send(Socket, IP, Port, Response),
     {noreply, State};
 
 handle_info({udp_passive, _}, #state { socket = Socket, active_n = ActiveN } = State) ->

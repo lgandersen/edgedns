@@ -108,7 +108,7 @@ resolving(cast, {resolve, Request}, #state { queue = Queue } = StateData) ->
     {keep_state, StateData#state { queue = [Request | Queue] }};
 
 resolving(info, ?RESPONSE(Response), StateData) ->
-    lager:notice("Response received!"),
+    %lager:notice("Response received!"),
     process_response(Response, StateData),
     case process_queue(StateData) of
         {empty_queue, NewStateData} ->
@@ -129,8 +129,8 @@ resolving(Event, EventData, StateData) ->
 %%===================================================================
 
 %% @private
-process_response(Response, #state { socket     = Socket,
-                                    request    = {IP, Port, Request, Caller} }) ->
+process_response(Response, #state { socket  = Socket,
+                                    request = {IP, Port, Request, Caller} }) ->
     Caller ! {response_received, {IP, Port, Response}},
     inet:setopts(Socket, [{active, once}]),
     edge_core_traffic_logger:log_query(IP, Port, Request, Response),
@@ -139,7 +139,7 @@ process_response(Response, #state { socket     = Socket,
 
 %% @private
 process_queue(#state { queue = Queue } = StateData) when length(Queue) =:= 0 ->
-    lager:notice("No more requests left in queue"),
+    %lager:notice("No more requests left in queue"),
     {empty_queue, StateData#state{ request = undefined }};
 
 process_queue(#state { dns_server         = DNSServer,
@@ -147,6 +147,7 @@ process_queue(#state { dns_server         = DNSServer,
                        blocking_threshold = BlockingThreshold } = StateData) when length(Queue) > 0 ->
 
     %% We have more requests in our queue so process the next one
+    lager:notice("Processing next request in queue of length ~p",[length(Queue)]),
     {IP, _Port, Packet, _Caller} = NewRequest = lists:last(Queue),
 
     %% Update our state
@@ -158,7 +159,7 @@ process_queue(#state { dns_server         = DNSServer,
             process_queue(StateData#state { queue = NewQueue });
 
         false ->
-            lager:notice("Sending request ~p to DNSserver ~p", [NewRequest, DNSServer]),
+            %lager:notice("Sending request ~p to DNSserver ~p", [NewRequest, DNSServer]),
             send(Packet, DNSServer),
             NewStateData = StateData#state { queue   = NewQueue,
                                              request = NewRequest

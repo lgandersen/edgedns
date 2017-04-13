@@ -52,12 +52,12 @@ register_lookup(IP, Score) ->
 is_blocked(IP, BlockingThreshold) ->
     case ets:lookup(?STATS_TABLE, IP) of
         [] ->
-            lager:warning("IP ~p not found in traffic stats table", [IP]),
+            %lager:warning("IP ~p not found in traffic stats table", [IP]),
             false;
 
         [{IP, Score}] ->
             %% If the IP is in the table, check if its score is above the blocking threshold or not
-            lager:notice("IP Found in traffic stats table, having ~p points", [round(Score)]),
+            %lager:notice("IP Found in traffic stats table, having ~p points", [round(Score)]),
             Score > BlockingThreshold
     end.
 
@@ -85,7 +85,7 @@ handle_cast({register_lookup, IP, Score}, #state { traffic_stats = Table } = Sta
     UpdateOps = [{2, Score}],
     Key = IP,
     ets:update_counter(Table, Key, UpdateOps, Default),
-    lager:notice("Traffic stats so far: ~p", [ets:tab2list(Table)]),
+    %lager:notice("Traffic stats so far: ~p", [ets:tab2list(Table)]),
     {noreply, State};
 
 handle_cast(_Msg, State) ->
@@ -117,7 +117,7 @@ code_change(_OldVsn, State, _Extra) ->
 write_down_points(Table, DecayRate) ->
     Limit = 10000,
     done = write_down_points(Table, ets:match(Table, '$1', Limit), DecayRate),
-    lager:notice("Table-stats after write-down: ~p", [ets:tab2list(Table)]).
+    lager:notice("Number of ip addresses in table after writedown: ~p", [length(ets:tab2list(Table))]).
 
 write_down_points(Table, {Rows, Continuation}, DecayRate) ->
     UpdatedRows = lists:map(
