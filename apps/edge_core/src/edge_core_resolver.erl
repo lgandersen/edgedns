@@ -7,6 +7,9 @@
 %%%-------------------------------------------------------------------
 -module(edge_core_resolver).
 
+-include_lib("kernel/src/inet_dns.hrl").
+-include_lib("stdlib/include/ms_transform.hrl").
+
 -behaviour(gen_statem).
 
 %% API
@@ -17,8 +20,7 @@
 
 %% States
 -export([
-         idle/3,
-         resolving/3
+         active/3
         ]).
 
 %% gen_statem callbacks
@@ -34,11 +36,11 @@
 -define(RESPONSE(Packet), {udp, _Socket, _IP, _Port, Packet}).
 
 -record(state, {
-          socket     :: gen_udp:socket(),
+          socket             :: gen_udp:socket(),
           blocking_threshold :: pos_integer(),
-          dns_server :: {gen_udp:socket(), inet:ip_address(), inet:port_number()},
-          request    :: term(), % be TODO more precise
-          queue = [] :: [term()]}).
+          dns_server         :: {gen_udp:socket(), inet:ip_address(), inet:port_number()},
+          last_id            :: integer(),
+          pending_requests   :: ets:tid()}).
 
 -type state() :: #state {}.
 
@@ -71,11 +73,15 @@ init([LocalPort, DNSServerIP, DNSServerPort]) ->
     lager:warning("Starting resolver using port ~p", [LocalPort]),
     case gen_udp:open(LocalPort, [binary, inet, {active, once}, {reuseaddr, true}]) of
         {ok, Socket} ->
+            Table = ets:new(pending_requests, [set, protected]),
             DNSServer = {Socket, DNSServerIP, DNSServerPort},
             StateData = #state { dns_server          = DNSServer,
+                                 pending_requests    = Table,
+                                 last_id             = 1, %rand:uniform(round(math:pow(2, 16)) - 1),
                                  blocking_threshold  = edge_core_config:blocking_threshold(),
                                  socket              = Socket },
-            {ok, idle, StateData};
+            make_cleanup_reminder(),
+            {ok, active, StateData};
 
         {error, _} = Error ->
             {stop, Error}
@@ -93,78 +99,65 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %% States
 %%===================================================================
 %% @private
-idle(cast, {resolve, Request}, StateData) ->
-    case process_queue(StateData#state { queue = [Request] }) of
-        {empty_queue, NewStateData} ->
-            {keep_state, NewStateData};
+active(cast, {resolve, {IP, Port, Request, Caller}}, #state { pending_requests   = Table,
+                                                              blocking_threshold = BlockingThreshold,
+                                                              last_id            = LastId,
+                                                              dns_server         = DNSServer } = StateData) ->
+    OurRequestID = next_id(LastId),
+    case edge_core_traffic_monitor:is_blocked(IP, BlockingThreshold) of
+        true ->
+            lager:notice("IP ~p is blocked.", [IP]),
+            ok;
 
-        {processing_request, NewStateData} ->
-            {next_state, resolving, NewStateData}
-    end.
+        false ->
+            case inet_dns:decode(Request) of
+                 {ok, #dns_rec { header = #dns_header { id = OldID }} = Data} ->
+                    Element = {OurRequestID, OldID, Caller, IP, Port, Request, erlang:system_time(second)},
+                    true = ets:insert(Table, Element),
+                    NewPacket = inet_dns:encode(Data#dns_rec { header = #dns_header { id = OurRequestID }}),
+                    send(NewPacket, DNSServer),
+                    ok;
+                  Other ->
+                    lager:warning("Could not parse packet, failed with: ~p", [Other])
+            end
+    end,
+    {keep_state, StateData#state { last_id = OurRequestID }};
 
+active(info, {udp, Socket, _IP, _Port, Response}, #state { pending_requests = Table } = StateData) ->
+    %lager:warning("received response from our dns server"),
+    case inet_dns:decode(Response) of
+        {ok, #dns_rec { header = #dns_header { id = NewID }} = Data} ->
+            case ets:lookup(Table, NewID) of
+                [{NewID, OldID, Caller, IP, Port, Request, _Timestamp}] ->
+                    true = ets:delete(Table, NewID),
+                    ResponseOldID = inet_dns:encode(Data#dns_rec { header = #dns_header { id = OldID }}),
+                    Caller ! {response_received, {IP, Port, ResponseOldID}},
+                    edge_core_traffic_logger:log_query(IP, Port, Request, Response),
+                    edge_core_traffic_monitor:register_lookup(IP, score(Request, Response));
+                [] ->
+                    lager:warning("Fejlslagent opslag i tabellen!")
+            end;
 
-%% @private
-resolving(cast, {resolve, Request}, #state { queue = Queue } = StateData) ->
-    {keep_state, StateData#state { queue = [Request | Queue] }};
+        Other ->
+            lager:warning("kunne ikke dekode dns-svar: ~p", [Other])
+    end,
+    inet:setopts(Socket, [{active, once}]),
+    {keep_state, StateData};
 
-resolving(info, ?RESPONSE(Response), StateData) ->
-    lager:notice("Response received!"),
-    process_response(Response, StateData),
-    case process_queue(StateData) of
-        {empty_queue, NewStateData} ->
-            {next_state, idle, NewStateData};
-
-        {processing_request, NewStateData} ->
-            {keep_state, NewStateData}
-    end;
-
-
-resolving(Event, EventData, StateData) ->
-    lager:warning("Unkown event ~p with eventdata ~p", [Event, EventData]),
+active(info, cleanup_table, #state { pending_requests = Table } = StateData) ->
+    Now = erlang:system_time(second),
+    MatchSpec = ets:fun2ms(
+        fun({_, _, _, _, _, _, Timestamp})
+              when Now - Timestamp > 3 -> true
+        end),
+    _NumDeleted = ets:select_delete(Table, MatchSpec),
+    %lager:warning("Timed out connections discarded: ~p", [NumDeleted]),
+    make_cleanup_reminder(),
     {keep_state, StateData}.
-
 
 %%===================================================================
 %% Internal functions
 %%===================================================================
-
-%% @private
-process_response(Response, #state { socket     = Socket,
-                                    request    = {IP, Port, Request, Caller} }) ->
-    Caller ! {response_received, {IP, Port, Response}},
-    inet:setopts(Socket, [{active, once}]),
-    edge_core_traffic_logger:log_query(IP, Port, Request, Response),
-    edge_core_traffic_monitor:register_lookup(IP, score(Request, Response)).
-
-
-%% @private
-process_queue(#state { queue = Queue } = StateData) when length(Queue) =:= 0 ->
-    lager:notice("No more requests left in queue"),
-    {empty_queue, StateData#state{ request = undefined }};
-
-process_queue(#state { dns_server         = DNSServer,
-                       queue              = Queue,
-                       blocking_threshold = BlockingThreshold } = StateData) when length(Queue) > 0 ->
-
-    %% We have more requests in our queue so process the next one
-    {IP, _Port, Packet, _Caller} = NewRequest = lists:last(Queue),
-
-    %% Update our state
-    NewQueue = lists:droplast(Queue),
-
-    case edge_core_traffic_monitor:is_blocked(IP, BlockingThreshold) of
-        true ->
-            lager:notice("IP Address ~p is blocked!", [IP]),
-            process_queue(StateData#state { queue = NewQueue });
-
-        false ->
-            lager:notice("Sending request ~p to DNSserver ~p", [NewRequest, DNSServer]),
-            send(Packet, DNSServer),
-            NewStateData = StateData#state { queue   = NewQueue,
-                                             request = NewRequest
-            },
-            {processing_request, NewStateData}
-    end.
 
 %% @private
 send(Packet, {Socket, IP, Port}) ->
@@ -175,3 +168,11 @@ score(Request, Response) ->
     RequestSize = size(Request),
     ResponseSize = size(Response),
     round( (RequestSize + ResponseSize) * (ResponseSize / RequestSize) ).
+
+-define(MAX_INT16, 65535).
+
+next_id(LastId) ->
+    ((LastId + 1) rem ?MAX_INT16) + 1.
+
+make_cleanup_reminder() ->
+    erlang:send_after(5000, self(), cleanup_table).
