@@ -26,7 +26,7 @@
 %% API
 -export([decode/2]).
 
-%% @doc decodes dns-requests from pcap dump and sends them as erlang messages to a receiver process.
+%% @doc decodes dns-requests from pcap files sends them as erlang messages to a receiver process.
 decode(Path, Receiver) ->
     case file:open(Path, [read, raw, binary]) of
         {ok, File} ->
@@ -131,14 +131,14 @@ decode_ethernet_frame(File, Size) ->
 
 
 %% @private
-decode_network_packet(?IPV4_DATAGRAM, 
+decode_network_packet(?IPV4_DATAGRAM,
                       <<4:4, _IHL:4, _DSCP:6, _ECN:2, _TotalLength:16,
                         _ID:16, _Flags:3, _FragmentOffset:13, _TTL:8,
                         TransportProtocol:8, _Checksum:16,
                         SourceIP:4/binary, DestinationIP:4/binary, Data/binary>>) ->
     {ok, {TransportProtocol, decode_ip(SourceIP), decode_ip(DestinationIP), Data}};
 
-decode_network_packet(EtherType, _Data) -> 
+decode_network_packet(EtherType, _Data) ->
     lager:warning("Unkown/unsupported EtherType ~p", [EtherType]),
     error.
 
@@ -150,7 +150,7 @@ decode_transport_packet(?UDP, <<SourcePort:16, DestinationPort:16,
                      type             = udp,
                      source_port      = SourcePort,
                      destination_port = DestinationPort,
-                     data             = Data}, 
+                     data             = Data},
   {ok, TransportData};
 
 decode_transport_packet(?TCP, <<_SourcePort:16, _DestinationPort:16, _SequenceNumber:32,

@@ -67,8 +67,7 @@ init(_Args) ->
     Resolvers = maps:from_list(
                   lists:zip(
                     lists:seq(0, NResolvers - 1),
-                    ResolverPids
-                   )),
+                    ResolverPids)),
 
     case gen_udp:open(Port, [binary, inet, {active, Active}, {reuseaddr, true}]) of
         {ok, Socket} ->
@@ -97,8 +96,8 @@ handle_info({udp, _, IP, Port, Packet}, #state{resolvers = Resolvers, next_resol
     %lager:warning("Incoming request: ~p", [IP]),
     Resolver = maps:get(Resolver2Use, Resolvers),
     edge_core_resolver:resolve(Resolver, IP, Port, Packet),
-    NextResolver2Use = (Resolver2Use + 1) rem maps:size(Resolvers),
-    {noreply, StateData#state { next_resolver = NextResolver2Use }};
+    NextResolverToUse = (Resolver2Use + 1) rem maps:size(Resolvers),
+    {noreply, StateData#state { next_resolver = NextResolverToUse }};
 
 handle_info({response_received, {IP, Port, Response}}, #state { socket = Socket } = State) ->
     % FIXME this is only while debugging. No need to send attack-traffic
