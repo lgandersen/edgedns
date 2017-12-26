@@ -49,7 +49,6 @@ log_query(IP, Port, Query, Response) ->
 
 %% @private
 init([]) ->
-    %{ok, PacketLog} = dets:open_file(?LOG_TABLE, [{type, duplicate_bag}, {access, read_write}, {keypos, 1}, {file, "log.table"}]),
     {ok, LogFile} = file:open("log.csv", [write]),
     {ok, #state { log_file = LogFile }}.
 
@@ -62,7 +61,6 @@ handle_call(_Request, _From, State) ->
 handle_cast({log_query, IP, _Port, Query, Response}, #state { table = _PacketLog, log_file = LogFile } = State) ->
     %lager:notice("Saving query to log"),
     io:fwrite(LogFile, "~p|~p|~p|~p~n", [IP, erlang:system_time(milli_seconds), size(Query), size(Response)]),
-    %ok = dets:insert(PacketLog, [{erlang:system_time(milli_seconds), IP, Port, Query, Response}]),
     {noreply, State};
 
 handle_cast(_Msg, State) ->
@@ -84,7 +82,3 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-
-
-
-
