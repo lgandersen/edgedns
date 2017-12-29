@@ -99,7 +99,7 @@ handle_info({udp, _, IP, Port, Packet}, #state{resolvers = Resolvers, next_resol
     NextResolverToUse = (Resolver2Use + 1) rem maps:size(Resolvers),
     {noreply, StateData#state { next_resolver = NextResolverToUse }};
 
-handle_info({response_received, {IP, Port, Response}}, #state { socket = Socket } = State) ->
+handle_info({response_received, {_IP, _Port, _Response}}, #state { socket = _Socket } = State) ->
     % FIXME this is only while debugging. No need to send attack-traffic
     %lager:notice("Response received, relaying answer to client"),
     %gen_udp:send(Socket, IP, Port, Response),

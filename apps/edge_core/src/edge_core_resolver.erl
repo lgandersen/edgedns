@@ -126,14 +126,10 @@ active(cast, {resolve, {IP, Port, Request, Caller}}, #state { pending_requests  
     {keep_state, StateData#state { last_id = NextId }};
 
 %% Got a response for the DNS server
-active(info, Response = ?RESPONSE(ResponseData), #state { pending_requests = Table,
-                                                          dns_server       = {Socket, DNSServerIP, DNSServerPort}} = StateData) ->
-
-    %% Verifye that this an incoming packet from our dns-server
-    {udp, Socket, DNSServerIP, DNSServerPort, _} = Response,
-
+active(info, {udp, Socket, DNSServerIP, DNSServerPort, Response}, #state { pending_requests = Table,
+                                                                           dns_server       = {Socket, DNSServerIP, DNSServerPort}} = StateData) ->
     %lager:warning("received response from our dns server"),
-    case inet_dns:decode(ResponseData) of
+    case inet_dns:decode(Response) of
         {ok, #dns_rec { header = #dns_header { id = InternalId }} = Data} ->
             case ets:lookup(Table, InternalId) of
                 [{NewID, OriginalId, Caller, IP, Port, Request, _Timestamp}] ->
