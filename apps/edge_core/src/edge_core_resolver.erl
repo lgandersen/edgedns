@@ -99,7 +99,7 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %% States
 %%===================================================================
 %% @private
-active(cast, {resolve, {IP, Port, Request, Caller}}, #state { pending_requests   = Table,
+active(cast, {resolve, {IP, Port, RequestRaw, Caller}}, #state { pending_requests   = Table,
                                                               blocking_threshold = BlockingThreshold,
                                                               last_id            = LastId,
                                                               dns_server         = DNSServer } = StateData) ->
@@ -110,13 +110,13 @@ active(cast, {resolve, {IP, Port, Request, Caller}}, #state { pending_requests  
             LastId;
 
         false ->
-            case inet_dns:decode(Request) of
-                 {ok, #dns_rec { header = #dns_header { id = OldID }} = Data} ->
+            case inet_dns:decode(RequestRaw) of
+                 {ok, #dns_rec { header = Header = #dns_header { id = OldID }} = Request} ->
                     InternalId = next_id(LastId),
-                    Element = {InternalId, OldID, Caller, IP, Port, Request, erlang:system_time(second)},
+                    Element = {InternalId, OldID, Caller, IP, Port, RequestRaw, erlang:system_time(second)},
                     true = ets:insert(Table, Element),
-                    NewPacket = inet_dns:encode(Data#dns_rec { header = #dns_header { id = InternalId }}),
-                    send(NewPacket, DNSServer),
+                    ForwardRequest = inet_dns:encode(Request#dns_rec { header = Header#dns_header { id = InternalId }}),
+                    send(ForwardRequest, DNSServer),
                     InternalId;
                   Other ->
                     lager:warning("Could not parse DNS request, failed with: ~p", [Other]),
@@ -138,7 +138,6 @@ active(info, {udp, Socket, DNSServerIP, DNSServerPort, Response}, #state { pendi
                     Caller ! {response_received, {IP, Port, ResponseOldID}},
                     #dns_rec { qdlist = QuestionSection } = Data,
                     QueryType = extract_query_type(QuestionSection),
-                    %lager:warning("~p", [QueryType]),
                     edge_core_traffic_logger:log_query(IP, Port, Request, Response, QueryType),
                     edge_core_traffic_monitor:register_lookup(IP, score(Request, Response));
                 [] ->
