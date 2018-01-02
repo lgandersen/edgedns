@@ -11,7 +11,7 @@
 
 %% API
 -export([start_link/0,
-         log_query/4]).
+         log_query/5]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -40,8 +40,8 @@
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
-log_query(IP, Port, Query, Response) ->
-    gen_server:cast(?SERVER, {log_query, IP, Port, Query, Response}).
+log_query(IP, Port, Query, Response, QueryType) ->
+    gen_server:cast(?SERVER, {log_query, IP, Port, Query, Response, QueryType}).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -58,9 +58,9 @@ handle_call(_Request, _From, State) ->
     {reply, Reply, State}.
 
 %% @private
-handle_cast({log_query, IP, _Port, Query, Response}, #state { table = _PacketLog, log_file = LogFile } = State) ->
+handle_cast({log_query, IP, _Port, Query, Response, QueryType}, #state { table = _PacketLog, log_file = LogFile } = State) ->
     %lager:notice("Saving query to log"),
-    io:fwrite(LogFile, "~p|~p|~p|~p~n", [IP, erlang:system_time(milli_seconds), size(Query), size(Response)]),
+    io:fwrite(LogFile, "~p|~p|~p|~p|~p~n", [IP, erlang:system_time(milli_seconds), size(Query), size(Response), QueryType]),
     {noreply, State};
 
 handle_cast(_Msg, State) ->

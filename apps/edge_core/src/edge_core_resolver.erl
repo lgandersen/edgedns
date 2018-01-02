@@ -136,7 +136,10 @@ active(info, {udp, Socket, DNSServerIP, DNSServerPort, Response}, #state { pendi
                     true = ets:delete(Table, NewID),
                     ResponseOldID = inet_dns:encode(Data#dns_rec { header = #dns_header { id = OriginalId }}),
                     Caller ! {response_received, {IP, Port, ResponseOldID}},
-                    edge_core_traffic_logger:log_query(IP, Port, Request, Response),
+                    #dns_rec { qdlist = QuestionSection } = Data,
+                    QueryType = extract_query_type(QuestionSection),
+                    %lager:warning("~p", [QueryType]),
+                    edge_core_traffic_logger:log_query(IP, Port, Request, Response, QueryType),
                     edge_core_traffic_monitor:register_lookup(IP, score(Request, Response));
                 [] ->
                     lager:warning("Fejlslagent opslag i tabellen!")
@@ -179,3 +182,13 @@ next_id(LastId) ->
 
 make_cleanup_reminder() ->
     erlang:send_after(5000, self(), cleanup_table).
+
+extract_query_type(Query) ->
+    extract_query_type(Query, []).
+
+
+extract_query_type([{dns_query, _Name, Type, _Class} | Rest], Types) ->
+    extract_query_type(Rest, [Type | Types]);
+
+extract_query_type([], Types) ->
+    Types.
