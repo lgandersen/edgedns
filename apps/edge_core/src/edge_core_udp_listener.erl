@@ -35,7 +35,8 @@
           socket    :: gen_udp:socket(),
           active_n  :: non_neg_integer(),
           next_resolver :: non_neg_integer(),
-          resolvers :: [pid()]
+          resolvers :: [pid()],
+          silent  :: boolean()
     }).
 
 -include_lib("kernel/src/inet_dns.hrl").
@@ -48,6 +49,7 @@ start_link() ->
 init(_Args) ->
     Port   = edge_core_config:port(),
     Active = edge_core_config:active_message_count(),
+    Silent = edge_core_config:silent(),
 
     {DNSServerIP, DNSServerPort} = edge_core_config:nameserver(),
 
@@ -75,7 +77,8 @@ init(_Args) ->
             {ok, #state { resolvers     = Resolvers,
                           next_resolver = 0,
                           socket        = Socket,
-                          active_n      = Active }};
+                          active_n      = Active,
+                          silent        = Silent}};
 
         {error, _} = Error ->
             Error
@@ -99,10 +102,15 @@ handle_info({udp, _, IP, Port, Packet}, #state{resolvers = Resolvers, next_resol
     NextResolverToUse = (Resolver2Use + 1) rem maps:size(Resolvers),
     {noreply, StateData#state { next_resolver = NextResolverToUse }};
 
-handle_info({response_received, {_IP, _Port, _Response}}, #state { socket = _Socket } = State) ->
-    % FIXME this is only while debugging. No need to send attack-traffic
+handle_info({response_received, {IP, Port, Response}}, #state { socket = Socket, silent = Silent } = State) ->
     %lager:notice("Response received, relaying answer to client"),
-    %gen_udp:send(Socket, IP, Port, Response),
+    case Silent of
+        false ->
+            gen_udp:send(Socket, IP, Port, Response);
+
+        _ ->
+            ok
+    end,
     {noreply, State};
 
 handle_info({udp_passive, _}, #state { socket = Socket, active_n = ActiveN } = State) ->

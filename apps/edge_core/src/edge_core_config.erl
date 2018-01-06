@@ -11,7 +11,8 @@
          active_message_count/0,
          port_range_resolvers/0,
          nameserver/0,
-         decay_rate/0
+         decay_rate/0,
+         silent/0
         ]).
 
 -spec port() -> inet:port_number().
@@ -37,6 +38,10 @@ nameserver() ->
 -spec active_message_count() -> non_neg_integer().
 active_message_count() ->
     get_value(active_message_count).
+
+-spec silent() -> boolean().
+silent() ->
+    get_value(silent).
 
 %% @private
 -spec get_value(Key) -> term()

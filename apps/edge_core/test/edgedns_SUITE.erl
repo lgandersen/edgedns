@@ -131,6 +131,7 @@ t_edgedns(Config) ->
 
 set_env_variables() ->
     application:set_env(edge_core, port, 5331),
+    application:set_env(edge_core, silent, false),
     application:set_env(edge_core, port_range_resolvers, {5333, 5363}),
     application:set_env(edge_core, nameserver, {{89, 233, 43, 71}, 53}),
     application:set_env(edge_core, active_message_count, 10),
