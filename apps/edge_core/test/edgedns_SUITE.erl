@@ -26,6 +26,7 @@
          %% TODO: test case names go here
          t_inet_res_queries/1,
          t_edgedns/1,
+         t_edgedns_many_types/1,
          t_lookup_unicast/1,
          t_lookup_anycast/1
         ]).
@@ -34,6 +35,8 @@
 -include_lib("common_test/include/ct.hrl").
 
 -define(PROPTEST(M,F), true = proper:quickcheck(M:F())).
+
+-define(SET(List), sets:from_list(List)).
 
 all() ->
     [
@@ -62,7 +65,7 @@ groups() ->
         %%         ]}
         {inet_res, [], [t_inet_res_queries]},
         {censurfridns_dk, [], [t_lookup_unicast, t_lookup_anycast]},
-        {edgedns, [], [t_edgedns]}
+        {edgedns, [], [t_edgedns, t_edgedns_many_types]}
     ].
 
 %%%===================================================================
@@ -86,6 +89,9 @@ end_per_suite(_Config) ->
 %%%===================================================================
 group(_Groupname) ->
     [].
+
+init_per_group(edgedns, Config) ->
+    Config;
 
 init_per_group(_Groupname, Config) ->
     Config.
@@ -129,10 +135,29 @@ t_edgedns(Config) ->
     ok = run_test_queries(DNSServer),
     ok.
 
+t_edgedns_many_types(Config) ->
+    ok = set_env_variables(),
+    ok = start_edgedns_processes(),
+    Types = [a, aaaa, ns, mx, txt],
+    lists:map(fun(Type) -> verify_dns_response(Config, Type) end, Types),
+    ok.
+
+verify_dns_response(Config, Type) ->
+    EdgeDNS = ?config(edgedns_server, Config),
+    TestServer = ?config(unicast_server, Config),
+    {ok, {dns_rec, _Header1, QDList1, ANList1, NSList1, ARList1}} = inet_res:resolve("bornhack.dk", in, Type, [{nameservers, [EdgeDNS]}]),
+    {ok, {dns_rec, _Header2, QDList2, ANList2, NSList2, ARList2}} = inet_res:resolve("bornhack.dk", in, Type, [{nameservers, [TestServer]}]),
+    true = ?SET(QDList1) =:= ?SET(QDList2),
+    true = ?SET(ANList1) =:= ?SET(ANList2),
+    true = ?SET(NSList1) =:= ?SET(NSList2),
+    true = ?SET(ARList1) =:= ?SET(ARList2),
+    ok.
+
+
 set_env_variables() ->
     application:set_env(edge_core, port, 5331),
     application:set_env(edge_core, silent, false),
-    application:set_env(edge_core, port_range_resolvers, {5333, 5363}),
+    application:set_env(edge_core, port_range_resolvers, {5333, 5340}),
     application:set_env(edge_core, nameserver, {{89, 233, 43, 71}, 53}),
     application:set_env(edge_core, active_message_count, 10),
     application:set_env(edge_core, blocking_threshold, 99999999999),
@@ -140,10 +165,6 @@ set_env_variables() ->
     ok.
 
 start_edgedns_processes() ->
-    %application:start(edgedns_core),
-
-    %{ok, _EdgeDNS} = edge_core_sup:start_link(),
-
     {ok, _Listener} = edge_core_udp_listener:start_link(),
     {ok, _Logger} = edge_core_traffic_logger:start_link(),
     {ok, _Monitor} = edge_core_traffic_monitor:start_link(),
