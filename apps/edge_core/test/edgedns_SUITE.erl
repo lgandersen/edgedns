@@ -162,6 +162,7 @@ set_env_variables() ->
     application:set_env(edge_core, active_message_count, 10),
     application:set_env(edge_core, blocking_threshold, 99999999999),
     application:set_env(edge_core, decay_rate, 0.5),
+    application:set_env(edge_core, do_nothing, false),
     ok.
 
 start_edgedns_processes() ->

@@ -12,8 +12,13 @@
          port_range_resolvers/0,
          nameserver/0,
          decay_rate/0,
+         do_nothing/0,
          silent/0
         ]).
+
+-spec do_nothing() -> boolean().
+do_nothing() ->
+    get_value(do_nothing).
 
 -spec port() -> inet:port_number().
 port() ->

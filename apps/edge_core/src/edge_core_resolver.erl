@@ -40,6 +40,7 @@
           blocking_threshold :: pos_integer(),
           dns_server         :: {gen_udp:socket(), inet:ip_address(), inet:port_number()},
           last_id            :: integer(),
+          do_nothing        :: boolean(),
           pending_requests   :: ets:tid()}).
 
 -type state() :: #state {}.
@@ -79,6 +80,7 @@ init([LocalPort, DNSServerIP, DNSServerPort]) ->
                                  pending_requests    = Table,
                                  last_id             = 1, %rand:uniform(round(math:pow(2, 16)) - 1),
                                  blocking_threshold  = edge_core_config:blocking_threshold(),
+                                 do_nothing          = edge_core_config:do_nothing(),
                                  socket              = Socket },
             make_cleanup_reminder(),
             {ok, active, StateData};
@@ -99,31 +101,24 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %% States
 %%===================================================================
 %% @private
-active(cast, {resolve, {IP, Port, RequestRaw, Caller}}, #state { pending_requests   = Table,
-                                                              blocking_threshold = BlockingThreshold,
-                                                              last_id            = LastId,
-                                                              dns_server         = DNSServer } = StateData) ->
+active(cast, {resolve, {IP, Port, RequestRaw, Caller}}, #state {
+                                                           blocking_threshold = BlockingThreshold,
+                                                           do_nothing         = DoNothing,
+                                                           last_id            = LastId } = State) ->
     %% Received a request to resolve at the DNS server
-    NextId = case edge_core_traffic_monitor:is_blocked(IP, BlockingThreshold) of
-        true ->
+    IsBlocked = edge_core_traffic_monitor:is_blocked(IP, BlockingThreshold),
+    NextId = case {IsBlocked, DoNothing} of
+         {true, false} ->
             lager:notice("IP ~p is blocked.", [IP]),
             LastId;
 
-        false ->
-            case inet_dns:decode(RequestRaw) of
-                 {ok, #dns_rec { header = Header = #dns_header { id = OldID }} = Request} ->
-                    InternalId = next_id(LastId),
-                    Element = {InternalId, OldID, Caller, IP, Port, RequestRaw, erlang:system_time(second)},
-                    true = ets:insert(Table, Element),
-                    ForwardRequest = inet_dns:encode(Request#dns_rec { header = Header#dns_header { id = InternalId }}),
-                    send(ForwardRequest, DNSServer),
-                    InternalId;
-                  Other ->
-                    lager:warning("Could not parse DNS request, failed with: ~p", [Other]),
-                    LastId
-            end
+         {true, true} ->
+            process_request(IP, Port, RequestRaw, Caller, State);
+
+         {false, _} ->
+            process_request(IP, Port, RequestRaw, Caller, State)
     end,
-    {keep_state, StateData#state { last_id = NextId }};
+    {keep_state, State#state { last_id = NextId }};
 
 %% Got a response for the DNS server
 active(info, {udp, Socket, DNSServerIP, DNSServerPort, Response}, #state { pending_requests = Table,
@@ -164,6 +159,25 @@ active(info, cleanup_table, #state { pending_requests = Table } = StateData) ->
 %%===================================================================
 %% Internal functions
 %%===================================================================
+%% @private
+process_request(IP, Port, RequestRaw, Caller, #state {
+                                                pending_requests = Table,
+                                                last_id          = LastId,
+                                                dns_server       = DNSServer }) ->
+    case inet_dns:decode(RequestRaw) of
+         {ok, #dns_rec { header = Header = #dns_header { id = OldID }} = Request} ->
+            InternalId = next_id(LastId),
+            Element = {InternalId, OldID, Caller, IP, Port, RequestRaw, erlang:system_time(second)},
+            true = ets:insert(Table, Element),
+            ForwardRequest = inet_dns:encode(Request#dns_rec { header = Header#dns_header { id = InternalId }}),
+            send(ForwardRequest, DNSServer),
+            InternalId;
+          Other ->
+            lager:warning("Could not parse DNS request, failed with: ~p", [Other]),
+            LastId
+    end.
+
+
 %% @private
 send(Packet, {Socket, IP, Port}) ->
     ok = gen_udp:send(Socket, IP, Port, Packet).
