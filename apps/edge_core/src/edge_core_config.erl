@@ -6,7 +6,7 @@
 -module(edge_core_config).
 
 %% API.
--export([port/0,
+-export([listeners/0,
          blocking_threshold/0,
          active_message_count/0,
          port_range_resolvers/0,
@@ -20,9 +20,10 @@
 do_nothing() ->
     get_value(do_nothing).
 
--spec port() -> inet:port_number().
-port() ->
-    get_value(port).
+-spec listeners() -> inet:port_number().
+listeners() ->
+    Listeners = get_value(listeners),
+    [{parse_address(Address), Port} || {Address, Port} <- Listeners].
 
 -spec blocking_threshold() -> pos_integer().
 blocking_threshold() ->
@@ -47,6 +48,19 @@ active_message_count() ->
 -spec silent() -> boolean().
 silent() ->
     get_value(silent).
+
+%% @private
+-spec parse_address(string()) -> inet:ip().
+parse_address(Address) ->
+    IsItIPv4 = inet:getaddr(Address, inet),
+    IsItIPv6 = inet:getaddr(Address, inet6),
+    parse_address_(IsItIPv4, IsItIPv6).
+
+parse_address_({ok, IPv4}, _) ->
+    IPv4;
+
+parse_address_(_, {ok, IPv6}) ->
+    IPv6.
 
 %% @private
 -spec get_value(Key) -> term()

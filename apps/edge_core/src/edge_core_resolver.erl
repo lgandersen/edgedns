@@ -15,7 +15,7 @@
 %% API
 -export([
         start_link/3,
-        resolve/4
+        resolve/5
         ]).
 
 %% States
@@ -33,6 +33,7 @@
 
 -define(SERVER, ?MODULE).
 
+-define(MessageID(Id), #dns_rec { header = #dns_header { id = Id }}).
 -define(RESPONSE(Packet), {udp, _Socket, _IP, _Port, Packet}).
 
 -record(state, {
@@ -40,7 +41,8 @@
           blocking_threshold :: pos_integer(),
           dns_server         :: {gen_udp:socket(), inet:ip_address(), inet:port_number()},
           last_id            :: integer(),
-          do_nothing        :: boolean(),
+          do_nothing         :: boolean(),
+          silent             :: boolean(),
           pending_requests   :: ets:tid()}).
 
 -type state() :: #state {}.
@@ -58,8 +60,8 @@
 start_link(LocalPort, DNSServerIP, DNSServerPort) ->
     gen_statem:start_link(?MODULE, [LocalPort, DNSServerIP, DNSServerPort], []).
 
-resolve(Resolver, IP, Port, Packet) ->
-    gen_statem:cast(Resolver, {resolve, {IP, Port, Packet, self()}}).
+resolve(Resolver, Socket, IP, Port, Packet) ->
+    gen_statem:cast(Resolver, {resolve, {Socket, IP, Port, Packet, self()}}).
 
 
 %%===================================================================
@@ -78,6 +80,7 @@ init([LocalPort, DNSServerIP, DNSServerPort]) ->
             DNSServer = {Socket, DNSServerIP, DNSServerPort},
             StateData = #state { dns_server          = DNSServer,
                                  pending_requests    = Table,
+                                 silent              = edge_core_config:silent(),
                                  last_id             = 1, %rand:uniform(round(math:pow(2, 16)) - 1),
                                  blocking_threshold  = edge_core_config:blocking_threshold(),
                                  do_nothing          = edge_core_config:do_nothing(),
@@ -101,7 +104,7 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %% States
 %%===================================================================
 %% @private
-active(cast, {resolve, {IP, Port, RequestRaw, Caller}}, #state {
+active(cast, {resolve, {Socket, IP, Port, RequestRaw, Caller}}, #state {
                                                            blocking_threshold = BlockingThreshold,
                                                            do_nothing         = DoNothing,
                                                            last_id            = LastId } = State) ->
@@ -113,37 +116,24 @@ active(cast, {resolve, {IP, Port, RequestRaw, Caller}}, #state {
             LastId;
 
          {true, true} ->
-            process_request(IP, Port, RequestRaw, Caller, State);
+            process_request(Socket, IP, Port, RequestRaw, Caller, State);
 
          {false, _} ->
-            process_request(IP, Port, RequestRaw, Caller, State)
+            process_request(Socket, IP, Port, RequestRaw, Caller, State)
     end,
     {keep_state, State#state { last_id = NextId }};
 
 %% Got a response for the DNS server
-active(info, {udp, Socket, DNSServerIP, DNSServerPort, Response}, #state { pending_requests = Table,
-                                                                           dns_server       = {Socket, DNSServerIP, DNSServerPort}} = StateData) ->
-    %lager:warning("received response from our dns server"),
+active(info, {udp, Socket, _DNSServerIP, _DNSServerPort, Response}, State) ->
     case inet_dns:decode(Response) of
-        {ok, #dns_rec { header = #dns_header { id = InternalId }} = Data} ->
-            case ets:lookup(Table, InternalId) of
-                [{NewID, OriginalId, Caller, IP, Port, Request, _Timestamp}] ->
-                    true = ets:delete(Table, NewID),
-                    ResponseOldID = inet_dns:encode(Data#dns_rec { header = #dns_header { id = OriginalId }}),
-                    Caller ! {response_received, {IP, Port, ResponseOldID}},
-                    #dns_rec { qdlist = QuestionSection } = Data,
-                    QueryType = extract_query_type(QuestionSection),
-                    edge_core_traffic_logger:log_query(IP, Port, Request, Response, QueryType),
-                    edge_core_traffic_monitor:register_lookup(IP, score(Request, Response));
-                [] ->
-                    lager:warning("Fejlslagent opslag i tabellen!")
-            end;
+        {ok, Data} ->
+            process_response(Data, State);
 
         Other ->
             lager:warning("kunne ikke dekode dns-svar: ~p", [Other])
     end,
     inet:setopts(Socket, [{active, once}]),
-    {keep_state, StateData};
+    {keep_state, State};
 
 active(info, cleanup_table, #state { pending_requests = Table } = StateData) ->
     Now = erlang:system_time(second),
@@ -152,7 +142,6 @@ active(info, cleanup_table, #state { pending_requests = Table } = StateData) ->
               when Now - Timestamp > 3 -> true
         end),
     _NumDeleted = ets:select_delete(Table, MatchSpec),
-    %lager:warning("Timed out connections discarded: ~p", [NumDeleted]),
     make_cleanup_reminder(),
     {keep_state, StateData}.
 
@@ -160,18 +149,18 @@ active(info, cleanup_table, #state { pending_requests = Table } = StateData) ->
 %% Internal functions
 %%===================================================================
 %% @private
-process_request(IP, Port, RequestRaw, Caller, #state {
-                                                pending_requests = Table,
-                                                last_id          = LastId,
-                                                dns_server       = DNSServer }) ->
+process_request(Socket, IP, Port, RequestRaw, Caller, #state {pending_requests = Table,
+                                                              last_id          = LastId,
+                                                              dns_server       = DNSServer }) ->
     case inet_dns:decode(RequestRaw) of
          {ok, #dns_rec { header = Header = #dns_header { id = OldID }} = Request} ->
             InternalId = next_id(LastId),
-            Element = {InternalId, OldID, Caller, IP, Port, RequestRaw, erlang:system_time(second)},
+            Element = {InternalId, OldID, Caller, Socket, IP, Port, RequestRaw, erlang:system_time(second)},
             true = ets:insert(Table, Element),
             ForwardRequest = inet_dns:encode(Request#dns_rec { header = Header#dns_header { id = InternalId }}),
-            send(ForwardRequest, DNSServer),
+            send_request(ForwardRequest, DNSServer),
             InternalId;
+
           Other ->
             lager:warning("Could not parse DNS request, failed with: ~p", [Other]),
             LastId
@@ -179,7 +168,7 @@ process_request(IP, Port, RequestRaw, Caller, #state {
 
 
 %% @private
-send(Packet, {Socket, IP, Port}) ->
+send_request(Packet, {Socket, IP, Port}) ->
     ok = gen_udp:send(Socket, IP, Port, Packet).
 
 %% @private
@@ -187,6 +176,29 @@ score(Request, Response) ->
     RequestSize = size(Request),
     ResponseSize = size(Response),
     round( (RequestSize + ResponseSize) * (ResponseSize / RequestSize) ).
+
+%% @private
+process_response(?MessageID(InternalId) = Data, #state { pending_requests = Table} = State) ->
+    case ets:lookup(Table, InternalId) of
+        [{InternalId, OriginalId, _Caller, ListeningSocket, IP, Port, Request, _Timestamp}] ->
+            true = ets:delete(Table, InternalId),
+            DataOriginalId = Data?MessageID(OriginalId),
+            ResponseOldID = inet_dns:encode(DataOriginalId),
+            send_response(ListeningSocket, IP, Port, ResponseOldID, State),
+            #dns_rec { qdlist = QuestionSection } = Data,
+            QueryType = extract_query_type(QuestionSection),
+            edge_core_traffic_logger:log_query(IP, Port, Request, ResponseOldID, QueryType),
+            edge_core_traffic_monitor:register_lookup(IP, score(Request, ResponseOldID));
+
+        [] ->
+            lager:warning("Error looking up pending query in table!")
+    end.
+
+send_response(_, _, _, _, #state { silent = true }) ->
+    ok;
+
+send_response(Socket, IP, Port, Response, _) ->
+    gen_udp:send(Socket, IP, Port, Response).
 
 -define(MAX_INT16, 65535).
 

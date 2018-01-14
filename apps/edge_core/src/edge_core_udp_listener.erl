@@ -47,7 +47,6 @@ start_link() ->
 
 %% @private
 init(_Args) ->
-    Port   = edge_core_config:port(),
     Active = edge_core_config:active_message_count(),
     Silent = edge_core_config:silent(),
 
@@ -71,18 +70,18 @@ init(_Args) ->
                     lists:seq(0, NResolvers - 1),
                     ResolverPids)),
 
-    case gen_udp:open(Port, [binary, inet, {active, Active}, {reuseaddr, true}]) of
-        {ok, Socket} ->
-            lager:notice("Listening to incoming DNS requests on port ~p", [Port]),
-            {ok, #state { resolvers     = Resolvers,
-                          next_resolver = 0,
-                          socket        = Socket,
-                          active_n      = Active,
-                          silent        = Silent}};
+    %% Start listening for DNS requests
+    Listeners = edge_core_config:listeners(),
+    lists:map(fun({IP, Port}) ->
+                  {ok, _Socket} = open_listening_socket(IP, Port, Active)
+                  end, Listeners),
 
-        {error, _} = Error ->
-            Error
-    end.
+    {ok, #state { resolvers     = Resolvers,
+                  next_resolver = 0,
+                  active_n      = Active,
+                  silent        = Silent
+                }
+    }.
 
 %% @private
 handle_call(Request, _From, State) ->
@@ -95,23 +94,12 @@ handle_cast(Message, State) ->
     {noreply, State}.
 
 %% @private
-handle_info({udp, _, IP, Port, Packet}, #state{resolvers = Resolvers, next_resolver = Resolver2Use} = StateData) ->
+handle_info({udp, Socket, IP, Port, Packet}, #state{resolvers = Resolvers, next_resolver = Resolver2Use} = StateData) ->
     %lager:warning("Incoming request: ~p", [IP]),
     Resolver = maps:get(Resolver2Use, Resolvers),
-    edge_core_resolver:resolve(Resolver, IP, Port, Packet),
+    edge_core_resolver:resolve(Resolver, Socket, IP, Port, Packet),
     NextResolverToUse = (Resolver2Use + 1) rem maps:size(Resolvers),
     {noreply, StateData#state { next_resolver = NextResolverToUse }};
-
-handle_info({response_received, {IP, Port, Response}}, #state { socket = Socket, silent = Silent } = State) ->
-    %lager:notice("Response received, relaying answer to client"),
-    case Silent of
-        false ->
-            gen_udp:send(Socket, IP, Port, Response);
-
-        _ ->
-            ok
-    end,
-    {noreply, State};
 
 handle_info({udp_passive, _}, #state { socket = Socket, active_n = ActiveN } = State) ->
     inet:setopts(Socket, [{active, ActiveN}]),
@@ -128,3 +116,13 @@ terminate(_Reason, _State) ->
 %% @private
 code_change(_OldVersion, State, _Extra) ->
     {ok, State}.
+
+%% @private
+open_listening_socket(IP, Port, Active) ->
+    case gen_udp:open(Port, [binary, inet, {ip, IP}, {active, Active}, {reuseaddr, true}]) of
+        {ok, _Socket} = Ok ->
+            lager:notice("Listening to incoming DNS requests on ip ~p port ~p", [IP, Port]),
+            Ok;
+        {error, _} = Error ->
+            Error
+    end.

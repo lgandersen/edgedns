@@ -155,7 +155,7 @@ verify_dns_response(Config, Type) ->
 
 
 set_env_variables() ->
-    application:set_env(edge_core, port, 5331),
+    application:set_env(edge_core, listeners, [{"127.0.0.1", 5331}]),
     application:set_env(edge_core, silent, false),
     application:set_env(edge_core, port_range_resolvers, {5333, 5340}),
     application:set_env(edge_core, nameserver, {{89, 233, 43, 71}, 53}),
