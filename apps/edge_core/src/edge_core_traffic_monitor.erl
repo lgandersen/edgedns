@@ -25,11 +25,11 @@
 
 -define(SERVER, ?MODULE).
 
--define(STATS_TABLE, traffic_stats).
+-define(SCORE_TABLE, score_table).
 
 -include_lib("stdlib/include/ms_transform.hrl").
 
--record(state, {traffic_stats      :: ets:tid(),
+-record(state, {score_table      :: ets:tid(),
                 decay_rate         :: float(),
                 blocking_threshold :: pos_integer()}).
 
@@ -50,14 +50,12 @@ register_lookup(IP, Score) ->
     gen_server:cast(?SERVER, {register_lookup, IP, Score}).
 
 is_blocked(IP, BlockingThreshold) ->
-    case ets:lookup(?STATS_TABLE, IP) of
+    case ets:lookup(?SCORE_TABLE, IP) of
         [] ->
-            %lager:warning("IP ~p not found in traffic stats table", [IP]),
             false;
 
         [{IP, Score}] ->
             %% If the IP is in the table, check if its score is above the blocking threshold or not
-            %lager:notice("IP Found in traffic stats table, having ~p points", [round(Score)]),
             Score > BlockingThreshold
     end.
 
@@ -67,10 +65,10 @@ is_blocked(IP, BlockingThreshold) ->
 
 %% @private
 init([]) ->
-    TrafficStats = ets:new(?STATS_TABLE, [protected, named_table, {keypos, 1}]),
+    Table = ets:new(?SCORE_TABLE, [protected, named_table, {keypos, 1}]),
     timer:send_after(1000, write_down_points),
-    {ok, #state { traffic_stats       = TrafficStats,
-                  decay_rate          = edge_core_config:decay_rate()
+    {ok, #state { score_table = Table,
+                  decay_rate  = edge_core_config:decay_rate()
                   }}.
 
 %% @private
@@ -79,23 +77,22 @@ handle_call(_Request, _From, State) ->
 
 
 %% @private
-handle_cast({register_lookup, IP, Score}, #state { traffic_stats = Table } = State) ->
+handle_cast({register_lookup, IP, Score}, #state { score_table = Table } = State) ->
     % structure of rows {IP, BytesSend, BytesReceived}
     Default = {IP, 0},
     UpdateOps = [{2, Score}],
     Key = IP,
     ets:update_counter(Table, Key, UpdateOps, Default),
-    %lager:notice("Traffic stats so far: ~p", [ets:tab2list(Table)]),
     {noreply, State};
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
 %% @private
-handle_info(write_down_points, #state { traffic_stats = TrafficStats,
-                                        decay_rate    = DecayRate } = State) ->
-    write_down_points(TrafficStats, DecayRate),
-    clean_up(TrafficStats),
+handle_info(write_down_points, #state { score_table = Table,
+                                        decay_rate  = DecayRate } = State) ->
+    write_down_points(Table, DecayRate),
+    clean_up(Table),
     timer:send_after(1000, write_down_points),
     {noreply, State};
 
@@ -134,7 +131,6 @@ write_down_points(_Table, '$end_of_table', _DecayRate) ->
 clean_up(Table) ->
     MatchSpec = ets:fun2ms(
         fun({_IP, Score})
-              %% "," means 'and' and ";" means 'or' in guard expressions
               when Score < 100 -> true
         end),
     ets:select_delete(Table, MatchSpec).

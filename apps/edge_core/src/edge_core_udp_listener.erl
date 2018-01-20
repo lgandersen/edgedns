@@ -95,7 +95,6 @@ handle_cast(Message, State) ->
 
 %% @private
 handle_info({udp, Socket, IP, Port, Packet}, #state{resolvers = Resolvers, next_resolver = Resolver2Use} = StateData) ->
-    %lager:warning("Incoming request: ~p", [IP]),
     Resolver = maps:get(Resolver2Use, Resolvers),
     edge_core_resolver:resolve(Resolver, Socket, IP, Port, Packet),
     NextResolverToUse = (Resolver2Use + 1) rem maps:size(Resolvers),

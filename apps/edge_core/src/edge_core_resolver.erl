@@ -168,16 +168,6 @@ process_request(Socket, IP, Port, RequestRaw, Caller, #state {pending_requests =
 
 
 %% @private
-send_request(Packet, {Socket, IP, Port}) ->
-    ok = gen_udp:send(Socket, IP, Port, Packet).
-
-%% @private
-score(Request, Response) ->
-    RequestSize = size(Request),
-    ResponseSize = size(Response),
-    round( (RequestSize + ResponseSize) * (ResponseSize / RequestSize) ).
-
-%% @private
 process_response(?MessageID(InternalId) = Data, #state { pending_requests = Table} = State) ->
     case ets:lookup(Table, InternalId) of
         [{InternalId, OriginalId, _Caller, ListeningSocket, IP, Port, Request, _Timestamp}] ->
@@ -194,11 +184,26 @@ process_response(?MessageID(InternalId) = Data, #state { pending_requests = Tabl
             lager:warning("Error looking up pending query in table!")
     end.
 
+
+%% @private
+send_request(Packet, {Socket, IP, Port}) ->
+    ok = gen_udp:send(Socket, IP, Port, Packet).
+
+
+%% @private
 send_response(_, _, _, _, #state { silent = true }) ->
     ok;
 
 send_response(Socket, IP, Port, Response, _) ->
     gen_udp:send(Socket, IP, Port, Response).
+
+
+%% @private
+score(Request, Response) ->
+    RequestSize = size(Request),
+    ResponseSize = size(Response),
+    round( (RequestSize + ResponseSize) * (ResponseSize / RequestSize) ).
+
 
 -define(MAX_INT16, 65535).
 
