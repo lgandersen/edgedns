@@ -25,18 +25,18 @@
 -export([
          %% TODO: test case names go here
          t_inet_res_queries/1,
+         t_edgedns_start_and_shutdown/1,
          t_edgedns/1,
+         t_edgedns_whitelisted/1,
          t_edgedns_many_types/1,
          t_lookup_unicast/1,
          t_lookup_anycast/1
         ]).
 
-%-include_lib("proper/include/proper.hrl").
 -include_lib("common_test/include/ct.hrl").
 
--define(PROPTEST(M,F), true = proper:quickcheck(M:F())).
-
 -define(SET(List), sets:from_list(List)).
+-define(EDGEDNS_CONFIG(Key, Value), application:set_env(edge_core, Key, Value)).
 
 all() ->
     [
@@ -65,7 +65,10 @@ groups() ->
         %%         ]}
         {inet_res, [], [t_inet_res_queries]},
         {censurfridns_dk, [], [t_lookup_unicast, t_lookup_anycast]},
-        {edgedns, [], [t_edgedns, t_edgedns_many_types]}
+        {edgedns, [], [t_edgedns_start_and_shutdown,
+                       t_edgedns,
+                       t_edgedns_whitelisted,
+                       t_edgedns_many_types]}
     ].
 
 %%%===================================================================
@@ -115,29 +118,40 @@ end_per_testcase(_TestCase, _Config) ->
 %%%===================================================================
 t_inet_res_queries(Config) ->
     DNSServer = ?config(google_server, Config),
-    ok = run_test_queries(DNSServer),
-    ok.
+    ok = run_test_queries(DNSServer).
 
 t_lookup_unicast(Config) ->
     DNSServer = ?config(unicast_server, Config),
-    ok = run_test_queries(DNSServer),
-    ok.
+    ok = run_test_queries(DNSServer).
 
 t_lookup_anycast(Config) ->
     DNSServer = ?config(anycast_server, Config),
-    ok = run_test_queries(DNSServer),
-    ok.
+    ok = run_test_queries(DNSServer).
+
+t_edgedns_start_and_shutdown(_Config) ->
+    ok = set_env_variables(),
+    Pids = start_edgedns_processes(),
+    shutdown_edgedns_processe(Pids).
 
 t_edgedns(Config) ->
     ok = set_env_variables(),
-    ok = start_edgedns_processes(),
+    _ = start_edgedns_processes(),
     DNSServer = ?config(edgedns_server, Config),
     ok = run_test_queries(DNSServer),
     ok.
 
+t_edgedns_whitelisted(Config) ->
+    ok = set_env_variables([{whitelisted, ["127.0.0.1"]}]),
+    _ = start_edgedns_processes(),
+    DNSServer = ?config(edgedns_server, Config),
+    ok = run_test_queries(DNSServer),
+    ok.
+
+%% FIXME make test da is being blocked
+
 t_edgedns_many_types(Config) ->
     ok = set_env_variables(),
-    ok = start_edgedns_processes(),
+    _ = start_edgedns_processes(),
     Types = [a, aaaa, ns, mx, txt],
     lists:map(fun(Type) -> verify_dns_response(Config, Type) end, Types),
     ok.
@@ -155,21 +169,35 @@ verify_dns_response(Config, Type) ->
 
 
 set_env_variables() ->
-    application:set_env(edge_core, listeners, [{"127.0.0.1", 5331}]),
-    application:set_env(edge_core, silent, false),
-    application:set_env(edge_core, port_range_resolvers, {5333, 5340}),
-    application:set_env(edge_core, nameserver, {{89, 233, 43, 71}, 53}),
-    application:set_env(edge_core, active_message_count, 10),
-    application:set_env(edge_core, blocking_threshold, 99999999999),
-    application:set_env(edge_core, decay_rate, 0.5),
-    application:set_env(edge_core, do_nothing, false),
-    ok.
+    set_env_variables([]).
+
+set_env_variables(Options) ->
+    DefaultOptions = [
+    {listeners,            [{"127.0.0.1", 5331}]},
+    {silent,               false},
+    {port_range_resolvers, {5333, 5340}},
+    {nameserver,           {{89, 233, 43, 71}, 53}},
+    {active_message_count, 10},
+    {blocking_threshold,   99999999999},
+    {decay_rate,           0.5},
+    {do_nothing,           false},
+    {whitelist,            []}  % Seperate test with and without being whitelisted!
+                     ],
+    lists:foreach(fun({Key, DefaultValue}) ->
+                          Value = proplists:get_value(Key, Options, DefaultValue),
+                          ?EDGEDNS_CONFIG(Key, Value)
+                  end, DefaultOptions).
 
 start_edgedns_processes() ->
-    {ok, _Listener} = edge_core_udp_listener:start_link(),
-    {ok, _Logger} = edge_core_traffic_logger:start_link(),
-    {ok, _Monitor} = edge_core_traffic_monitor:start_link(),
-    ok.
+    {ok, Listener} = edge_core_udp_listener:start_link(),
+    {ok, Logger} = edge_core_traffic_logger:start_link(),
+    {ok, Monitor} = edge_core_traffic_monitor:start_link(),
+    {Listener, Logger, Monitor}.
+
+shutdown_edgedns_processe({Listener, Logger, Monitor}) ->
+    exit(Listener, normal),
+    exit(Logger, normal),
+    exit(Monitor, normal).
 
 run_test_queries(DNSServer) ->
     AmazonDotCom = sets:from_list([{205,251,242,103}, {176,32,98,166}, {176,32,103,205}]),
