@@ -13,6 +13,7 @@
          nameserver/0,
          decay_rate/0,
          do_nothing/0,
+         whitelist/0,
          silent/0
         ]).
 
@@ -48,6 +49,11 @@ active_message_count() ->
 -spec silent() -> boolean().
 silent() ->
     get_value(silent).
+
+-spec whitelist() -> [inet:ip()].
+whitelist() ->
+    Whitelist = get_value(whitelist),
+    [parse_address(Address) || Address <- Whitelist].
 
 %% @private
 -spec parse_address(string()) -> inet:ip().

@@ -27,9 +27,15 @@
 
 -define(SCORE_TABLE, score_table).
 
+-define(WHITELIST, whitelist).
+
+-define(STAT_TABLE, stat_table).
+
 -include_lib("stdlib/include/ms_transform.hrl").
 
--record(state, {score_table      :: ets:tid(),
+-record(state, {score_table        :: ets:tid(),
+                stat_table         :: ets:tid(),
+                whitelist          :: ets:tid(),
                 decay_rate         :: float(),
                 blocking_threshold :: pos_integer()}).
 
@@ -49,14 +55,32 @@ start_link() ->
 register_lookup(IP, Score) ->
     gen_server:cast(?SERVER, {register_lookup, IP, Score}).
 
+register_query_status(Status) ->
+    gen_server:cast(?SERVER, {register_query_status, Status}).
+
 is_blocked(IP, BlockingThreshold) ->
-    case ets:lookup(?SCORE_TABLE, IP) of
-        [] ->
+    ScoreLookup = ets:lookup(?SCORE_TABLE, IP),
+    WhiteListed = ets:lookup(?WHITELIST, IP),
+    case {ScoreLookup, WhiteListed} of
+        {[], []} ->
+            %% Allowed, not whitelisted
+            register_query_status(allowed),
             false;
 
-        [{IP, Score}] ->
-            %% If the IP is in the table, check if its score is above the blocking threshold or not
-            Score > BlockingThreshold
+        {_, [{IP}]} ->
+            %% Whitelisted and thus not blocked
+            register_query_status(whitelisted),
+            false;
+
+        {[{IP, Score}], _} when Score > BlockingThreshold ->
+            %% Ip is in the table and above threshold
+            register_query_status(blocked),
+            true;
+
+        {[{IP, Score}], _} when Score =< BlockingThreshold ->
+            %% Ip is in the table and below threshold
+            register_query_status(allowed),
+            false
     end.
 
 %%%===================================================================
@@ -65,9 +89,14 @@ is_blocked(IP, BlockingThreshold) ->
 
 %% @private
 init([]) ->
-    Table = ets:new(?SCORE_TABLE, [protected, named_table, {keypos, 1}]),
+    WhiteList = ets:new(?WHITELIST, [protected, named_table, {keypos, 1}]),
+    StatTable = init_stat_table(),
+    insert_ips(WhiteList, edge_core_config:whitelist()),
+    ScoreTable = ets:new(?SCORE_TABLE, [protected, named_table, {keypos, 1}]),
     timer:send_after(1000, write_down_points),
-    {ok, #state { score_table = Table,
+    {ok, #state { score_table = ScoreTable,
+                  whitelist   = WhiteList,
+                  stat_table  = StatTable,
                   decay_rate  = edge_core_config:decay_rate()
                   }}.
 
@@ -75,6 +104,10 @@ init([]) ->
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
+
+handle_cast({register_query_status, Status}, State) ->
+    register_query_status_(Status),
+    {noreply, State};
 
 %% @private
 handle_cast({register_lookup, IP, Score}, #state { score_table = Table } = State) ->
@@ -134,3 +167,16 @@ clean_up(Table) ->
               when Score < 100 -> true
         end),
     ets:select_delete(Table, MatchSpec).
+
+insert_ips(Table, IPs) ->
+    [ets:insert(Table, {IP}) || IP <- IPs].
+
+init_stat_table() ->
+    Table = ets:new(?STAT_TABLE, [protected, named_table, {keypos, 1}]),
+    ets:insert(Table, {blocked, 0}),
+    ets:insert(Table, {allowed, 0}),
+    ets:insert(Table, {whitelisted, 0}),
+    Table.
+
+register_query_status_(Status) ->
+    ets:update_counter(?STAT_TABLE, Status, {2, 1}).
