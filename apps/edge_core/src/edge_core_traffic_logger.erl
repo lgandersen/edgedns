@@ -58,8 +58,8 @@ handle_call(_Request, _From, State) ->
     {reply, Reply, State}.
 
 %% @private
-handle_cast({log_query, IP, _Port, Query, Response, QueryType}, #state { table = _PacketLog, log_file = LogFile } = State) ->
-    %lager:notice("Saving query to log"),
+handle_cast({log_query, IP, _Port, Query, Response, QueryType}, #state { table    = _PacketLog,
+                                                                         log_file = LogFile } = State) ->
     io:fwrite(LogFile, "~p|~p|~p|~p|~p~n", [IP, erlang:system_time(milli_seconds), size(Query), size(Response), QueryType]),
     {noreply, State};
 

@@ -24,7 +24,7 @@
 %% test cases
 -export([
          %% TODO: test case names go here
-         t_inet_res_queries/1,
+         t_connectivity/1,
          t_edgedns_start_and_shutdown/1,
          t_edgedns/1,
          t_edgedns_whitelisted/1,
@@ -63,7 +63,7 @@ groups() ->
         %%          t_update_resource,
         %%          t_delete_resource
         %%         ]}
-        {inet_res, [], [t_inet_res_queries]},
+        {inet_res, [], [t_connectivity]},
         {censurfridns_dk, [], [t_lookup_unicast, t_lookup_anycast]},
         {edgedns, [], [t_edgedns_start_and_shutdown,
                        t_edgedns,
@@ -116,7 +116,7 @@ end_per_testcase(_TestCase, _Config) ->
 %%%===================================================================
 %%% Individual Test Cases (from groups() definition)
 %%%===================================================================
-t_inet_res_queries(Config) ->
+t_connectivity(Config) ->
     DNSServer = ?config(google_server, Config),
     ok = run_test_queries(DNSServer).
 
