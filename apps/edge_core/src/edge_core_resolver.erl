@@ -10,6 +10,8 @@
 -include_lib("kernel/src/inet_dns.hrl").
 -include_lib("stdlib/include/ms_transform.hrl").
 
+-include("edgedns.hrl").
+
 -behaviour(gen_statem).
 
 %% API
@@ -109,7 +111,7 @@ active(cast, {resolve, {Socket, IP, Port, RequestRaw, Caller}}, #state {
                                                            do_nothing         = DoNothing,
                                                            last_id            = LastId } = State) ->
     %% Received a request to resolve at the DNS server
-    IsBlocked = edge_core_traffic_monitor:is_blocked(IP, BlockingThreshold),
+    IsBlocked = is_blocked(IP, BlockingThreshold),
     NextId = case {IsBlocked, DoNothing} of
          {true, false} ->
             lager:notice("IP ~p is blocked.", [IP]),
@@ -148,6 +150,34 @@ active(info, cleanup_table, #state { pending_requests = Table } = StateData) ->
 %%===================================================================
 %% Internal functions
 %%===================================================================
+%% @private
+-spec is_blocked(inet:ip(), pos_integer()) -> boolean().
+is_blocked(IP, BlockingThreshold) ->
+    ScoreLookup = ets:lookup(?SCORE_TABLE, IP),
+    WhiteListed = ets:lookup(?WHITELIST, IP),
+    case {ScoreLookup, WhiteListed} of
+        {[], []} ->
+            %% Allowed, not whitelisted
+            edge_core_traffic_monitor:register_query_status(allowed),
+            false;
+
+        {_, [{IP}]} ->
+            %% Whitelisted and thus not blocked
+            edge_core_traffic_monitor:register_query_status(whitelisted),
+            false;
+
+        {[{IP, Score}], _} when Score > BlockingThreshold ->
+            %% Ip is in the table and above threshold
+            edge_core_traffic_monitor:register_query_status(blocked),
+            true;
+
+        {[{IP, Score}], _} when Score =< BlockingThreshold ->
+            %% Ip is in the table and below threshold
+            edge_core_traffic_monitor:register_query_status(allowed),
+            false
+    end.
+
+
 %% @private
 process_request(Socket, IP, Port, RequestRaw, Caller, #state {pending_requests = Table,
                                                               last_id          = LastId,

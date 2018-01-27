@@ -12,7 +12,8 @@
 %% API
 -export([start_link/0,
          register_lookup/2,
-         is_blocked/2
+         register_query_status/1,
+         reset_stat_table/0
         ]).
 
 %% gen_server callbacks
@@ -25,11 +26,7 @@
 
 -define(SERVER, ?MODULE).
 
--define(SCORE_TABLE, score_table).
-
--define(WHITELIST, whitelist).
-
--define(STAT_TABLE, stat_table).
+-include("edgedns.hrl").
 
 -include_lib("stdlib/include/ms_transform.hrl").
 
@@ -58,30 +55,8 @@ register_lookup(IP, Score) ->
 register_query_status(Status) ->
     gen_server:cast(?SERVER, {register_query_status, Status}).
 
-is_blocked(IP, BlockingThreshold) ->
-    ScoreLookup = ets:lookup(?SCORE_TABLE, IP),
-    WhiteListed = ets:lookup(?WHITELIST, IP),
-    case {ScoreLookup, WhiteListed} of
-        {[], []} ->
-            %% Allowed, not whitelisted
-            register_query_status(allowed),
-            false;
-
-        {_, [{IP}]} ->
-            %% Whitelisted and thus not blocked
-            register_query_status(whitelisted),
-            false;
-
-        {[{IP, Score}], _} when Score > BlockingThreshold ->
-            %% Ip is in the table and above threshold
-            register_query_status(blocked),
-            true;
-
-        {[{IP, Score}], _} when Score =< BlockingThreshold ->
-            %% Ip is in the table and below threshold
-            register_query_status(allowed),
-            false
-    end.
+reset_stat_table() ->
+    gen_server:cast(?SERVER, reset_stat_table).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -93,7 +68,7 @@ init([]) ->
     StatTable = init_stat_table(),
     insert_ips(WhiteList, edge_core_config:whitelist()),
     ScoreTable = ets:new(?SCORE_TABLE, [protected, named_table, {keypos, 1}]),
-    timer:send_after(1000, write_down_points),
+    timer:send_after(1000, write_down_scoring),
     {ok, #state { score_table = ScoreTable,
                   whitelist   = WhiteList,
                   stat_table  = StatTable,
@@ -106,27 +81,32 @@ handle_call(_Request, _From, State) ->
 
 
 handle_cast({register_query_status, Status}, State) ->
-    register_query_status_(Status),
+    ets:update_counter(?STAT_TABLE, Status, {2, 1}),
     {noreply, State};
 
 %% @private
-handle_cast({register_lookup, IP, Score}, #state { score_table = Table } = State) ->
+handle_cast({register_lookup, IP, Score}, State) ->
     % structure of rows {IP, BytesSend, BytesReceived}
     Default = {IP, 0},
     UpdateOps = [{2, Score}],
     Key = IP,
-    ets:update_counter(Table, Key, UpdateOps, Default),
+    ets:update_counter(?SCORE_TABLE, Key, UpdateOps, Default),
+    {noreply, State};
+
+handle_cast(reset_stat_table, State) ->
+    true = ets:update_element(?STAT_TABLE, blocked, {2, 0}),
+    true = ets:update_element(?STAT_TABLE, allowed, {2, 0}),
+    true = ets:update_element(?STAT_TABLE, whitelisted, {2, 0}),
     {noreply, State};
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
 %% @private
-handle_info(write_down_points, #state { score_table = Table,
-                                        decay_rate  = DecayRate } = State) ->
-    write_down_points(Table, DecayRate),
-    clean_up(Table),
-    timer:send_after(1000, write_down_points),
+handle_info(write_down_scoring, #state { decay_rate  = DecayRate } = State) ->
+    write_down_scoring(DecayRate),
+    clean_scoring_table(),
+    timer:send_after(1000, write_down_scoring),
     {noreply, State};
 
 handle_info(_Info, State) ->
@@ -144,29 +124,29 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
-write_down_points(Table, DecayRate) ->
+write_down_scoring(DecayRate) ->
     Limit = 10000,
-    done = write_down_points(Table, ets:match(Table, '$1', Limit), DecayRate),
-    lager:notice("Number of ip addresses in table after writedown: ~p", [length(ets:tab2list(Table))]).
+    done = write_down_scoring(ets:match(?SCORE_TABLE, '$1', Limit), DecayRate),
+    lager:notice("Number of ip addresses in table after writedown: ~p", [length(ets:tab2list(?SCORE_TABLE))]).
 
-write_down_points(Table, {Rows, Continuation}, DecayRate) ->
+write_down_scoring({Rows, Continuation}, DecayRate) ->
     UpdatedRows = lists:map(
                     fun ([{IP, Score}]) ->
                             NewScore = round(DecayRate * Score),
                             {IP, NewScore}
                     end, Rows),
-    ets:insert(Table, UpdatedRows),
-    write_down_points(Table, ets:match(Continuation), DecayRate);
+    ets:insert(?SCORE_TABLE, UpdatedRows),
+    write_down_scoring(ets:match(Continuation), DecayRate);
 
-write_down_points(_Table, '$end_of_table', _DecayRate) ->
+write_down_scoring('$end_of_table', _DecayRate) ->
     done.
 
-clean_up(Table) ->
+clean_scoring_table() ->
     MatchSpec = ets:fun2ms(
         fun({_IP, Score})
               when Score < 100 -> true
         end),
-    ets:select_delete(Table, MatchSpec).
+    ets:select_delete(?SCORE_TABLE, MatchSpec).
 
 insert_ips(Table, IPs) ->
     [ets:insert(Table, {IP}) || IP <- IPs].
@@ -177,6 +157,3 @@ init_stat_table() ->
     ets:insert(Table, {allowed, 0}),
     ets:insert(Table, {whitelisted, 0}),
     Table.
-
-register_query_status_(Status) ->
-    ets:update_counter(?STAT_TABLE, Status, {2, 1}).
