@@ -30,10 +30,7 @@
 
 -include_lib("stdlib/include/ms_transform.hrl").
 
--record(state, {score_table        :: ets:tid(),
-                stat_table         :: ets:tid(),
-                whitelist          :: ets:tid(),
-                decay_rate         :: float(),
+-record(state, {decay_rate         :: float(),
                 blocking_threshold :: pos_integer()}).
 
 %%===================================================================
@@ -64,16 +61,12 @@ reset_stat_table() ->
 
 %% @private
 init([]) ->
+    init_stat_table(),
+    ets:new(?SCORE_TABLE, [protected, named_table, {keypos, 1}]),
     WhiteList = ets:new(?WHITELIST, [protected, named_table, {keypos, 1}]),
-    StatTable = init_stat_table(),
     insert_ips(WhiteList, edge_core_config:whitelist()),
-    ScoreTable = ets:new(?SCORE_TABLE, [protected, named_table, {keypos, 1}]),
     timer:send_after(1000, write_down_scoring),
-    {ok, #state { score_table = ScoreTable,
-                  whitelist   = WhiteList,
-                  stat_table  = StatTable,
-                  decay_rate  = edge_core_config:decay_rate()
-                  }}.
+    {ok, #state { decay_rate  = edge_core_config:decay_rate() }}.
 
 %% @private
 handle_call(_Request, _From, State) ->

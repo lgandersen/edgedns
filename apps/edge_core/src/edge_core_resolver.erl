@@ -63,7 +63,7 @@ start_link(LocalPort, DNSServerIP, DNSServerPort) ->
     gen_statem:start_link(?MODULE, [LocalPort, DNSServerIP, DNSServerPort], []).
 
 resolve(Resolver, Socket, IP, Port, Packet) ->
-    gen_statem:cast(Resolver, {resolve, {Socket, IP, Port, Packet, self()}}).
+    gen_statem:cast(Resolver, {resolve, {Socket, IP, Port, Packet}}).
 
 
 %%===================================================================
@@ -106,7 +106,7 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %% States
 %%===================================================================
 %% @private
-active(cast, {resolve, {Socket, IP, Port, RequestRaw, Caller}}, #state {
+active(cast, {resolve, {Socket, IP, Port, RequestRaw}}, #state {
                                                            blocking_threshold = BlockingThreshold,
                                                            do_nothing         = DoNothing,
                                                            last_id            = LastId } = State) ->
@@ -118,10 +118,10 @@ active(cast, {resolve, {Socket, IP, Port, RequestRaw, Caller}}, #state {
             LastId;
 
          {true, true} ->
-            process_request(Socket, IP, Port, RequestRaw, Caller, State);
+            process_request(Socket, IP, Port, RequestRaw, State);
 
          {false, _} ->
-            process_request(Socket, IP, Port, RequestRaw, Caller, State)
+            process_request(Socket, IP, Port, RequestRaw, State)
     end,
     {keep_state, State#state { last_id = NextId }};
 
@@ -179,13 +179,13 @@ is_blocked(IP, BlockingThreshold) ->
 
 
 %% @private
-process_request(Socket, IP, Port, RequestRaw, Caller, #state {pending_requests = Table,
+process_request(Socket, IP, Port, RequestRaw, #state {pending_requests = Table,
                                                               last_id          = LastId,
                                                               dns_server       = DNSServer }) ->
     case inet_dns:decode(RequestRaw) of
          {ok, #dns_rec { header = Header = #dns_header { id = OldID }} = Request} ->
             InternalId = next_id(LastId),
-            Element = {InternalId, OldID, Caller, Socket, IP, Port, RequestRaw, erlang:system_time(second)},
+            Element = {InternalId, OldID, Socket, IP, Port, RequestRaw, erlang:system_time(second)},
             true = ets:insert(Table, Element),
             ForwardRequest = inet_dns:encode(Request#dns_rec { header = Header#dns_header { id = InternalId }}),
             send_request(ForwardRequest, DNSServer),
@@ -200,14 +200,12 @@ process_request(Socket, IP, Port, RequestRaw, Caller, #state {pending_requests =
 %% @private
 process_response(?MessageID(InternalId) = Data, #state { pending_requests = Table} = State) ->
     case ets:lookup(Table, InternalId) of
-        [{InternalId, OriginalId, _Caller, ListeningSocket, IP, Port, Request, _Timestamp}] ->
+        [{InternalId, OriginalId, ListeningSocket, IP, Port, Request, _Timestamp}] ->
             true = ets:delete(Table, InternalId),
             DataOriginalId = Data?MessageID(OriginalId),
             ResponseOldID = inet_dns:encode(DataOriginalId),
             send_response(ListeningSocket, IP, Port, ResponseOldID, State),
-            #dns_rec { qdlist = QuestionSection } = Data,
-            QueryType = extract_query_type(QuestionSection),
-            edge_core_traffic_logger:log_query(IP, Port, Request, ResponseOldID, QueryType),
+            edge_core_traffic_logger:log_query(IP, Port, Request, ResponseOldID, Data),
             edge_core_traffic_monitor:register_lookup(IP, score(Request, ResponseOldID));
 
         [] ->
@@ -234,7 +232,6 @@ score(Request, Response) ->
     ResponseSize = size(Response),
     round( (RequestSize + ResponseSize) * (ResponseSize / RequestSize) ).
 
-
 -define(MAX_INT16, 65535).
 
 next_id(LastId) ->
@@ -242,13 +239,3 @@ next_id(LastId) ->
 
 make_cleanup_reminder() ->
     erlang:send_after(5000, self(), cleanup_table).
-
-extract_query_type(Query) ->
-    extract_query_type(Query, []).
-
-
-extract_query_type([{dns_query, _Name, Type, _Class} | Rest], Types) ->
-    extract_query_type(Rest, [Type | Types]);
-
-extract_query_type([], Types) ->
-    Types.

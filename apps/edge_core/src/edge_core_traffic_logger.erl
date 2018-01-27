@@ -7,6 +7,8 @@
 %%%-------------------------------------------------------------------
 -module(edge_core_traffic_logger).
 
+-include_lib("kernel/src/inet_dns.hrl").
+
 -behaviour(gen_server).
 
 %% API
@@ -58,8 +60,8 @@ handle_call(_Request, _From, State) ->
     {reply, Reply, State}.
 
 %% @private
-handle_cast({log_query, IP, _Port, Query, Response, QueryType}, #state { table    = _PacketLog,
-                                                                         log_file = LogFile } = State) ->
+handle_cast({log_query, IP, _Port, Query, Response, Data}, #state { log_file = LogFile } = State) ->
+    QueryType = extract_query_type(Data),
     io:fwrite(LogFile, "~p|~p|~p|~p|~p~n", [IP, erlang:system_time(milli_seconds), size(Query), size(Response), QueryType]),
     {noreply, State};
 
@@ -71,8 +73,7 @@ handle_info(_Info, State) ->
     {noreply, State}.
 
 %% @private
-terminate(_Reason, #state { table = _PacketLog }) ->
-    %dets:close(PacketLog),
+terminate(_Reason, _State) ->
     ok.
 
 %% @private
@@ -82,3 +83,12 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+extract_query_type(#dns_rec { qdlist = QuestionSection }) ->
+    extract_query_type(QuestionSection, []).
+
+
+extract_query_type([{dns_query, _Name, Type, _Class} | Rest], Types) ->
+    extract_query_type(Rest, [Type | Types]);
+
+extract_query_type([], Types) ->
+    Types.
