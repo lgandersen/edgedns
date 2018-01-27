@@ -205,7 +205,7 @@ process_response(?MessageID(InternalId) = Data, #state { pending_requests = Tabl
             DataOriginalId = Data?MessageID(OriginalId),
             ResponseOldID = inet_dns:encode(DataOriginalId),
             send_response(ListeningSocket, IP, Port, ResponseOldID, State),
-            edge_core_traffic_logger:log_query(IP, Port, Request, ResponseOldID, Data),
+            edge_core_traffic_logger:log_query(IP, Request, ResponseOldID, Data),
             edge_core_traffic_monitor:register_lookup(IP, score(Request, ResponseOldID));
 
         [] ->

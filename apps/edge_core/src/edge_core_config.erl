@@ -14,7 +14,10 @@
          decay_rate/0,
          do_nothing/0,
          whitelist/0,
-         silent/0
+         silent/0,
+         query_log/0,
+         stats_log/0,
+         stats_log_frequencey/0
         ]).
 
 -spec do_nothing() -> boolean().
@@ -55,6 +58,18 @@ whitelist() ->
     Whitelist = get_value(whitelist),
     [parse_address(Address) || Address <- Whitelist].
 
+-spec query_log() -> string().
+query_log() ->
+    get_value(query_log, no_file).
+
+-spec stats_log() -> string().
+stats_log() ->
+    get_value(stats_log, no_file).
+
+-spec stats_log_frequencey() -> pos_integer().
+stats_log_frequencey() ->
+    1000 * get_value(stats_log_frequencey, 60).
+
 %% @private
 -spec parse_address(string()) -> inet:ip().
 parse_address(Address) ->
@@ -67,6 +82,14 @@ parse_address_({ok, IPv4}, _) ->
 
 parse_address_(_, {ok, IPv6}) ->
     IPv6.
+
+%% @private
+-spec get_value(Key, Default) -> term()
+    when
+        Key     :: atom(),
+        Default :: term().
+get_value(Key, Default) when is_atom(Key) ->
+    application:get_env(edge_core, Key, Default).
 
 %% @private
 -spec get_value(Key) -> term()
