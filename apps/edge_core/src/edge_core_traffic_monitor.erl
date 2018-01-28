@@ -13,7 +13,8 @@
 -export([start_link/0,
          register_lookup/2,
          register_query_status/1,
-         reset_stat_table/0
+         reset_stat_table/0,
+         get_dampened_ip_masks/0
         ]).
 
 %% gen_server callbacks
@@ -55,6 +56,9 @@ register_query_status(Status) ->
 reset_stat_table() ->
     gen_server:cast(?SERVER, reset_stat_table).
 
+get_dampened_ip_masks() ->
+    gen_server:call(?SERVER, get_dampened_ip_masks).
+
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
@@ -66,9 +70,12 @@ init([]) ->
     WhiteList = ets:new(?WHITELIST, [protected, named_table, {keypos, 1}]),
     insert_ips(WhiteList, edge_core_config:whitelist()),
     timer:send_after(1000, write_down_scoring),
-    {ok, #state { decay_rate  = edge_core_config:decay_rate() }}.
+    {ok, #state { decay_rate  = edge_core_config:decay_rate(), blocking_threshold = edge_core_config:blocking_threshold() }}.
 
 %% @private
+handle_call(get_dampened_ip_masks, _From, State) ->
+    {reply, get_dampened_ip_masks_(State), State};
+
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
@@ -82,8 +89,7 @@ handle_cast({register_lookup, IP, Score}, State) ->
     % structure of rows {IP, BytesSend, BytesReceived}
     Default = {IP, 0},
     UpdateOps = [{2, Score}],
-    Key = IP,
-    ets:update_counter(?SCORE_TABLE, Key, UpdateOps, Default),
+    ets:update_counter(?SCORE_TABLE, IP, UpdateOps, Default),
     {noreply, State};
 
 handle_cast(reset_stat_table, State) ->
@@ -116,6 +122,21 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+
+get_dampened_ip_masks_(#state { blocking_threshold = Threshold }) ->
+     {DampenedEntries, _} = ets:foldl(
+                              fun get_dampened_ip_masks__/2,
+                              {0, Threshold}, ?SCORE_TABLE
+                             ),
+     DampenedEntries.
+
+%% @private
+get_dampened_ip_masks__({_IP, Score}, {Count, Threshold}) when Score > Threshold ->
+    {Count + 1, Threshold};
+
+get_dampened_ip_masks__(_, AccIn) ->
+    AccIn.
+
 
 write_down_scoring(DecayRate) ->
     Limit = 10000,
@@ -150,3 +171,21 @@ init_stat_table() ->
     ets:insert(Table, {allowed, 0}),
     ets:insert(Table, {whitelisted, 0}),
     Table.
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+
+get_dampened_ip_masks_test() ->
+    ets:new(?SCORE_TABLE, [protected, named_table, {keypos, 1}]),
+    IP1 = {13, 37, 1, 1}, Score1 = 100,
+    ets:update_counter(?SCORE_TABLE, IP1, {2, 0} , {IP1, Score1}),
+
+    IP2 = {13, 37, 2, 2}, Score2 = 50,
+    ets:update_counter(?SCORE_TABLE, IP2, {2, 0} , {IP2, Score2}),
+
+    IP3 = {13, 37, 3, 3}, Score3 = 150,
+    ets:update_counter(?SCORE_TABLE, IP3, {2, 0} , {IP3, Score3}),
+
+    2 = get_dampened_ip_masks_(#state { blocking_threshold = 99 }),
+    ok.
+-endif.

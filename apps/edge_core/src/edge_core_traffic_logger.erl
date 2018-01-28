@@ -78,10 +78,11 @@ handle_cast({log_query, {IP, Query, Response, Data}}, #state { query_log = LogFi
 handle_cast(log_stats, #state { stats_log = no_file } = State) ->
     {noreply, State};
 
-handle_cast(log_stats, #state { stats_log = File, logging_frequency = NextLog } = State) ->
-    io:fwrite(File, "~p|~p|~p~n", log_stats()),
-    edge_core_traffic_monitor:reset_stat_table(),
-    timer:send_after(NextLog, log_stats),
+handle_cast(log_stats, #state { stats_log = File, logging_frequency = NextLogging } = State) ->
+    NDampened = edge_core_traffic_monitor:get_dampened_ip_masks(),
+    {Blocked, Allowed, Whitelisted} = log_stats(),
+    io:fwrite(File, "~p|~p|~p|~p~n", [NDampened, Blocked, Allowed, Whitelisted]),
+    timer:send_after(NextLogging, log_stats),
     {noreply, State};
 
 handle_cast(_Msg, State) ->
@@ -107,7 +108,8 @@ log_stats() ->
     Blocked = ets:lookup_element(?STAT_TABLE, blocked, 2),
     Allowed = ets:lookup_element(?STAT_TABLE, allowed, 2),
     Whitelisted = ets:lookup_element(?STAT_TABLE, whitelisted, 2),
-    [Blocked, Allowed, Whitelisted].
+    edge_core_traffic_monitor:reset_stat_table(),
+    {Blocked, Allowed, Whitelisted}.
 
 %% @private
 extract_query_type(#dns_rec { qdlist = QuestionSection }) ->
