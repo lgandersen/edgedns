@@ -23,20 +23,22 @@
 
 %% test cases
 -export([
-         %% TODO: test case names go here
          t_connectivity/1,
+         t_lookup_unicast/1,
+         t_lookup_anycast/1,
          t_edgedns_start_and_shutdown/1,
          t_edgedns/1,
-         t_edgedns_whitelisted/1,
          t_edgedns_many_types/1,
-         t_lookup_unicast/1,
-         t_lookup_anycast/1
+         t_edgedns_blocked/1,
+         t_edgedns_unblocked/1,
+         t_edgedns_whitelisted/1
         ]).
 
 -include_lib("common_test/include/ct.hrl").
 
 -define(SET(List), sets:from_list(List)).
 -define(EDGEDNS_CONFIG(Key, Value), application:set_env(edge_core, Key, Value)).
+-define(BORNHACK_LOOKUP(DNSServer), [{85,235,250,91}] = inet_res:lookup("bornhack.dk", in, a, [{nameservers, [DNSServer]}])).
 
 all() ->
     [
@@ -140,14 +142,37 @@ t_edgedns(Config) ->
     ok = run_test_queries(DNSServer),
     ok.
 
+t_edgedns_blocked(Config) ->
+    ok = set_env_variables([{blocking_threshold, 10}]),
+    Pids = start_edgedns_processes(),
+    DNSServer = ?config(edgedns_server, Config),
+    ?BORNHACK_LOOKUP(DNSServer),
+    shutdown_edgedns_processe(Pids),
+    timer:sleep(1000),
+    LastLine = get_last_line("log/stats.log"),
+    {_start, _end} = binary:match(LastLine, <<"dampening activated.">>),
+    ok.
+
+t_edgedns_unblocked(Config) ->
+    ok = set_env_variables([{blocking_threshold, 2000},
+                            {decay_rate, 0.50},
+                            {whitelist, ["127.0.0.1"]}]),
+    Pids = start_edgedns_processes(),
+    DNSServer = ?config(edgedns_server, Config),
+    ?BORNHACK_LOOKUP(DNSServer),
+    timer:sleep(2000),
+    shutdown_edgedns_processe(Pids),
+    LastLine = get_last_line("log/stats.log"),
+    {_start, _end} = binary:match(LastLine, <<"dampening removed.">>),
+    ok.
+
 t_edgedns_whitelisted(Config) ->
-    ok = set_env_variables([{whitelisted, ["127.0.0.1"]}]),
+    ok = set_env_variables([{blocking_threshold, 10},
+                            {whitelist, ["127.0.0.1"]}]),
     _ = start_edgedns_processes(),
     DNSServer = ?config(edgedns_server, Config),
     ok = run_test_queries(DNSServer),
     ok.
-
-%% FIXME make test da is being blocked
 
 t_edgedns_many_types(Config) ->
     ok = set_env_variables(),
@@ -156,6 +181,16 @@ t_edgedns_many_types(Config) ->
     lists:map(fun(Type) -> verify_dns_response(Config, Type) end, Types),
     ok.
 
+%%===================================================================
+%% Internal functions
+%%===================================================================
+%% @private
+get_last_line(FilePath) ->
+    {ok, LogRaw} = file:read_file(FilePath),
+    [_, LastLine | _Rest] = lists:reverse(binary:split(LogRaw, <<"\n">>, [global])),
+    LastLine.
+
+%% @private
 verify_dns_response(Config, Type) ->
     EdgeDNS = ?config(edgedns_server, Config),
     TestServer = ?config(unicast_server, Config),
@@ -167,38 +202,30 @@ verify_dns_response(Config, Type) ->
     true = ?SET(ARList1) =:= ?SET(ARList2),
     ok.
 
-
+%% @private
 set_env_variables() ->
     set_env_variables([]).
 
 set_env_variables(Options) ->
-    DefaultOptions = [
-    {listeners,            [{"127.0.0.1", 5331}]},
-    {silent,               false},
-    {port_range_resolvers, {5333, 5340}},
-    {nameserver,           {{89, 233, 43, 71}, 53}},
-    {active_message_count, 10},
-    {blocking_threshold,   99999999999},
-    {decay_rate,           0.5},
-    {do_nothing,           false},
-    {whitelist,            []}  % Seperate test with and without being whitelisted!
-                     ],
-    lists:foreach(fun({Key, DefaultValue}) ->
-                          Value = proplists:get_value(Key, Options, DefaultValue),
-                          ?EDGEDNS_CONFIG(Key, Value)
-                  end, DefaultOptions).
+    lists:foreach(
+      fun({Key, Value}) ->
+              ?EDGEDNS_CONFIG(Key, Value)
+      end, Options).
 
+%% @private
 start_edgedns_processes() ->
     {ok, Listener} = edge_core_udp_listener:start_link(),
     {ok, Logger} = edge_core_traffic_logger:start_link(),
     {ok, Monitor} = edge_core_traffic_monitor:start_link(),
     {Listener, Logger, Monitor}.
 
+%% @private
 shutdown_edgedns_processe({Listener, Logger, Monitor}) ->
     exit(Listener, normal),
     exit(Logger, normal),
     exit(Monitor, normal).
 
+%% @private
 run_test_queries(DNSServer) ->
     AmazonDotCom = sets:from_list([{205,251,242,103}, {176,32,98,166}, {176,32,103,205}]),
     BornhackDotDk = [{85,235,250,91}],
