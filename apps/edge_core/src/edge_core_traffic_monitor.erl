@@ -85,11 +85,17 @@ handle_cast({register_query_status, Status}, State) ->
     {noreply, State};
 
 %% @private
-handle_cast({register_lookup, IP, Score}, State) ->
-    % structure of rows {IP, BytesSend, BytesReceived}
+handle_cast({register_lookup, IP, Score}, State = #state {blocking_threshold = Threshold }) ->
     Default = {IP, 0},
     UpdateOps = [{2, Score}],
-    ets:update_counter(?SCORE_TABLE, IP, UpdateOps, Default),
+    [NewScore] = ets:update_counter(?SCORE_TABLE, IP, UpdateOps, Default),
+    case (NewScore > Threshold) and (NewScore - Score =< Threshold) of
+        true ->
+            edge_core_traffic_logger:dampening_activated(IP);
+
+        false ->
+            ok
+    end,
     {noreply, State};
 
 handle_cast(reset_stat_table, State) ->
@@ -102,8 +108,8 @@ handle_cast(_Msg, State) ->
     {noreply, State}.
 
 %% @private
-handle_info(write_down_scoring, #state { decay_rate  = DecayRate } = State) ->
-    write_down_scoring(DecayRate),
+handle_info(write_down_scoring, #state { decay_rate  = DecayRate, blocking_threshold = Threshold } = State) ->
+    write_down_scoring(DecayRate, Threshold),
     clean_scoring_table(),
     timer:send_after(1000, write_down_scoring),
     {noreply, State};
@@ -138,21 +144,28 @@ get_dampened_ip_masks__(_, AccIn) ->
     AccIn.
 
 
-write_down_scoring(DecayRate) ->
+write_down_scoring(DecayRate, Threshold) ->
     Limit = 10000,
-    done = write_down_scoring(ets:match(?SCORE_TABLE, '$1', Limit), DecayRate),
+    done = write_down_scoring(ets:match(?SCORE_TABLE, '$1', Limit), DecayRate, Threshold),
     lager:notice("Number of ip addresses in table after writedown: ~p", [length(ets:tab2list(?SCORE_TABLE))]).
 
-write_down_scoring({Rows, Continuation}, DecayRate) ->
+write_down_scoring({Rows, Continuation}, DecayRate, Threshold) ->
     UpdatedRows = lists:map(
                     fun ([{IP, Score}]) ->
                             NewScore = round(DecayRate * Score),
+                            case (NewScore =< Threshold) and (Score > Threshold) of
+                                true ->
+                                    edge_core_traffic_logger:dampening_removed(IP);
+
+                                false ->
+                                    ok
+                            end,
                             {IP, NewScore}
                     end, Rows),
     ets:insert(?SCORE_TABLE, UpdatedRows),
-    write_down_scoring(ets:match(Continuation), DecayRate);
+    write_down_scoring(ets:match(Continuation), DecayRate, Threshold);
 
-write_down_scoring('$end_of_table', _DecayRate) ->
+write_down_scoring('$end_of_table', _DecayRate, _Threshold) ->
     done.
 
 clean_scoring_table() ->
