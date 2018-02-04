@@ -12,7 +12,7 @@
          port_range_resolvers/0,
          nameserver/0,
          decay_rate/0,
-         do_nothing/0,
+         no_blocking/0,
          whitelist/0,
          silent/0,
          query_log/0,
@@ -20,9 +20,9 @@
          stats_log_frequencey/0
         ]).
 
--spec do_nothing() -> boolean().
-do_nothing() ->
-    get_value(do_nothing).
+-spec no_blocking() -> boolean().
+no_blocking() ->
+    get_value(no_blocking).
 
 -spec listeners() -> inet:port_number().
 listeners() ->
@@ -43,7 +43,8 @@ port_range_resolvers() ->
 
 -spec nameserver() -> {inet:ip(), inet:port()}.
 nameserver() ->
-    get_value(nameserver).
+    {AddressRaw, Port} = get_value(nameserver),
+    {parse_address(AddressRaw), Port}.
 
 -spec active_message_count() -> non_neg_integer().
 active_message_count() ->

@@ -43,7 +43,7 @@
           blocking_threshold :: pos_integer(),
           dns_server         :: {gen_udp:socket(), inet:ip_address(), inet:port_number()},
           last_id            :: integer(),
-          do_nothing         :: boolean(),
+          no_blocking         :: boolean(),
           silent             :: boolean(),
           pending_requests   :: ets:tid()}).
 
@@ -83,9 +83,9 @@ init([LocalPort, DNSServerIP, DNSServerPort]) ->
             StateData = #state { dns_server          = DNSServer,
                                  pending_requests    = Table,
                                  silent              = edge_core_config:silent(),
-                                 last_id             = 1, %rand:uniform(round(math:pow(2, 16)) - 1),
+                                 last_id             = rand:uniform(round(math:pow(2, 16)) - 1),
                                  blocking_threshold  = edge_core_config:blocking_threshold(),
-                                 do_nothing          = edge_core_config:do_nothing(),
+                                 no_blocking          = edge_core_config:no_blocking(),
                                  socket              = Socket },
             make_cleanup_reminder(),
             {ok, active, StateData};
@@ -108,7 +108,7 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %% @private
 active(cast, {resolve, {Socket, IP, Port, RequestRaw}}, #state {
                                                            blocking_threshold = BlockingThreshold,
-                                                           do_nothing         = DoNothing,
+                                                           no_blocking        = DoNothing,
                                                            last_id            = LastId } = State) ->
     %% Received a request to resolve at the DNS server
     IsBlocked = is_blocked(IP, BlockingThreshold),
@@ -180,8 +180,8 @@ is_blocked(IP, BlockingThreshold) ->
 
 %% @private
 process_request(Socket, IP, Port, RequestRaw, #state {pending_requests = Table,
-                                                              last_id          = LastId,
-                                                              dns_server       = DNSServer }) ->
+                                                      last_id          = LastId,
+                                                      dns_server       = DNSServer }) ->
     case inet_dns:decode(RequestRaw) of
          {ok, #dns_rec { header = Header = #dns_header { id = OldID }} = Request} ->
             InternalId = next_id(LastId),
@@ -222,7 +222,7 @@ send_request(Packet, {Socket, IP, Port}) ->
 send_response(_, _, _, _, #state { silent = true }) ->
     ok;
 
-send_response(Socket, IP, Port, Response, _) ->
+send_response(Socket, IP, Port, Response, _State) ->
     gen_udp:send(Socket, IP, Port, Response).
 
 
