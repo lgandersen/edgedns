@@ -75,7 +75,7 @@ callback_mode() -> state_functions.
 %% @private
 -spec init([]) -> {ok, idle, state()} | {stop, term()}.
 init([LocalPort, DNSServerIP, DNSServerPort]) ->
-    lager:warning("Starting resolver using port ~p", [LocalPort]),
+    lager:info("Starting resolver using port ~p", [LocalPort]),
     case gen_udp:open(LocalPort, [binary, inet, {active, once}, {reuseaddr, true}]) of
         {ok, Socket} ->
             Table = ets:new(pending_requests, [set, protected]),
@@ -85,7 +85,7 @@ init([LocalPort, DNSServerIP, DNSServerPort]) ->
                                  silent              = edge_core_config:silent(),
                                  last_id             = rand:uniform(round(math:pow(2, 16)) - 1),
                                  blocking_threshold  = edge_core_config:blocking_threshold(),
-                                 no_blocking          = edge_core_config:no_blocking(),
+                                 no_blocking         = edge_core_config:no_blocking(),
                                  socket              = Socket },
             make_cleanup_reminder(),
             {ok, active, StateData};
@@ -106,15 +106,13 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %% States
 %%===================================================================
 %% @private
-active(cast, {resolve, {Socket, IP, Port, RequestRaw}}, #state {
-                                                           blocking_threshold = BlockingThreshold,
-                                                           no_blocking        = DoNothing,
-                                                           last_id            = LastId } = State) ->
+active(cast, {resolve, {Socket, IP, Port, RequestRaw}}, #state { blocking_threshold = BlockingThreshold,
+                                                                 no_blocking        = DoNothing,
+                                                                 last_id            = LastId } = State) ->
     %% Received a request to resolve at the DNS server
     IsBlocked = is_blocked(IP, BlockingThreshold),
     NextId = case {IsBlocked, DoNothing} of
          {true, false} ->
-            lager:notice("IP ~p is blocked.", [IP]),
             LastId;
 
          {true, true} ->
@@ -179,9 +177,9 @@ is_blocked(IP, BlockingThreshold) ->
 
 
 %% @private
-process_request(Socket, IP, Port, RequestRaw, #state {pending_requests = Table,
-                                                      last_id          = LastId,
-                                                      dns_server       = DNSServer }) ->
+process_request(Socket, IP, Port, RequestRaw, #state { pending_requests = Table,
+                                                       last_id          = LastId,
+                                                       dns_server       = DNSServer }) ->
     case inet_dns:decode(RequestRaw) of
          {ok, #dns_rec { header = Header = #dns_header { id = OldID }} = Request} ->
             InternalId = next_id(LastId),

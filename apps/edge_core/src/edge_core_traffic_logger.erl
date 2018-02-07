@@ -111,6 +111,7 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 %% @private
+-spec log_stats() -> {non_neg_integer(), non_neg_integer(), non_neg_integer()}.
 log_stats() ->
     Blocked = ets:lookup_element(?STAT_TABLE, blocked, 2),
     Allowed = ets:lookup_element(?STAT_TABLE, allowed, 2),
