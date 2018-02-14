@@ -106,7 +106,7 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %% States
 %%===================================================================
 %% @private
-active(cast, {resolve, {Socket, IP, Port, RequestRaw}}, #state { blocking_threshold = BlockingThreshold,
+active(cast, {resolve, {Socket, IP, Port, Request}}, #state { blocking_threshold = BlockingThreshold,
                                                                  no_blocking        = DoNothing,
                                                                  last_id            = LastId } = State) ->
     %% Received a request to resolve at the DNS server
@@ -116,22 +116,16 @@ active(cast, {resolve, {Socket, IP, Port, RequestRaw}}, #state { blocking_thresh
             LastId;
 
          {true, true} ->
-            process_request(Socket, IP, Port, RequestRaw, State);
+            process_request({Socket, IP, Port}, Request, State);
 
          {false, _} ->
-            process_request(Socket, IP, Port, RequestRaw, State)
+            process_request({Socket, IP, Port}, Request, State)
     end,
     {keep_state, State#state { last_id = NextId }};
 
 %% Got a response for the DNS server
 active(info, {udp, Socket, _DNSServerIP, _DNSServerPort, Response}, State) ->
-    case inet_dns:decode(Response) of
-        {ok, Data} ->
-            process_response(Data, State);
-
-        Other ->
-            lager:warning("kunne ikke dekode dns-svar: ~p", [Other])
-    end,
+    process_response(Response, State),
     inet:setopts(Socket, [{active, once}]),
     {keep_state, State};
 
@@ -177,34 +171,30 @@ is_blocked(IP, BlockingThreshold) ->
 
 
 %% @private
-process_request(Socket, IP, Port, RequestRaw, #state { pending_requests = Table,
-                                                       last_id          = LastId,
-                                                       dns_server       = DNSServer }) ->
-    case inet_dns:decode(RequestRaw) of
-         {ok, #dns_rec { header = Header = #dns_header { id = OldID }} = Request} ->
-            InternalId = next_id(LastId),
-            Element = {InternalId, OldID, Socket, IP, Port, RequestRaw, erlang:system_time(second)},
-            true = ets:insert(Table, Element),
-            ForwardRequest = inet_dns:encode(Request#dns_rec { header = Header#dns_header { id = InternalId }}),
-            send_request(ForwardRequest, DNSServer),
-            InternalId;
+process_request(Sender, <<Id:2/binary, Request/binary>>, #state { pending_requests = Table,
+                                                                  last_id          = LastInternalId,
+                                                                  dns_server       = DNSServer }) ->
+    InternalIdInteger = next_id(LastInternalId),
+    InternalId = <<InternalIdInteger:16/big-integer>>,
 
-          Other ->
-            lager:warning("Could not parse DNS request, failed with: ~p", [Other]),
-            LastId
-    end.
+    Element = {InternalId, Id, Sender, Request, erlang:system_time(second)},
+    true = ets:insert(Table, Element),
 
+    FullRequest = <<InternalId:2/binary, Request/binary>>,
+    send_request(FullRequest, DNSServer),
+    InternalId.
 
 %% @private
-process_response(?MessageID(InternalId) = Data, #state { pending_requests = Table} = State) ->
+process_response(<<InternalId:2/binary, Response/binary>>, #state { pending_requests = Table} = State) ->
+
     case ets:lookup(Table, InternalId) of
-        [{InternalId, OriginalId, ListeningSocket, IP, Port, Request, _Timestamp}] ->
+        [{InternalId, Id, Sender, Request, _Timestamp}] ->
             true = ets:delete(Table, InternalId),
-            DataOriginalId = Data?MessageID(OriginalId),
-            ResponseOldID = inet_dns:encode(DataOriginalId),
-            send_response(ListeningSocket, IP, Port, ResponseOldID, State),
-            edge_core_traffic_logger:log_query(IP, Request, ResponseOldID, Data),
-            edge_core_traffic_monitor:register_lookup(IP, score(Request, ResponseOldID));
+            FullResponse = <<Id:2/binary, Response/binary>>,
+            {ListeningSocket, IP, Port} = Sender,
+            send_response(ListeningSocket, IP, Port, FullResponse, State),
+            edge_core_traffic_logger:log_query(IP, Request, Response),
+            edge_core_traffic_monitor:register_lookup(IP, score(Request, Response));
 
         [] ->
             lager:warning("Error looking up pending query in table!")

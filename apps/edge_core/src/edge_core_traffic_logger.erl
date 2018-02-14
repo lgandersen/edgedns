@@ -15,7 +15,7 @@
 
 %% API
 -export([start_link/0,
-         log_query/4,
+         log_query/3,
          dampening_activated/1,
          dampening_removed/1]).
 
@@ -46,8 +46,8 @@
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
-log_query(IP, Query, Response, QueryType) ->
-    gen_server:cast(?SERVER, {log_query, {IP, Query, Response, QueryType}}).
+log_query(IP, Query, Response) ->
+    gen_server:cast(?SERVER, {log_query, {IP, Query, Response}}).
 
 dampening_activated(IP) ->
     gen_server:cast(?SERVER, {dampening_activated, IP}).
@@ -71,9 +71,18 @@ handle_call(_Request, _From, State) ->
     {reply, Reply, State}.
 
 %% @private
-handle_cast({log_query, {IP, Query, Response, Data}}, State) ->
-    [QueryType] = extract_query_type(Data),
-    query_log:info("~p|~p|~p|~p|~p~n", [IP, erlang:system_time(milli_seconds), size(Query), size(Response), QueryType]),
+handle_cast({log_query, {IP, Query, Response}}, State) ->
+    %% FIXME this should be enabled through a macro such that no query-parsing is
+    %% taking place unless this full logging is turned on
+    case inet_dns:decode(Response) of
+        {ok, Data} ->
+            [QueryType] = extract_query_type(Data),
+            Log = [IP, erlang:system_time(milli_seconds), size(Query), size(Response), QueryType],
+            query_log:info("~p|~p|~p|~p|~p~n", Log);
+
+        Other ->
+            lager:warning("kunne ikke dekode dns-svar: ~p", [Other])
+    end,
     {noreply, State};
 
 handle_cast(log_stats, #state { logging_frequency = NextLogging } = State) ->
