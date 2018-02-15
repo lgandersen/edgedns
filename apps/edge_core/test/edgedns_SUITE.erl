@@ -150,53 +150,52 @@ t_edgedns_start_and_shutdown(_Config) ->
     Pids = start_edgedns_processes(),
     shutdown_edgedns_processe(Pids).
 
-t_edgedns_a(Config) ->
-    ok = resolve_and_verify("bornhack.dk", a, Config).
+t_edgedns_a(_Config) ->
+    ok = resolve_and_verify("bornhack.dk", a).
 
-t_edgedns_aaaa(Config) ->
-    ok = resolve_and_verify("bornhack.dk", aaaa, Config).
+t_edgedns_aaaa(_Config) ->
+    ok = resolve_and_verify("bornhack.dk", aaaa).
 
-t_edgedns_ns(Config) ->
-    ok = resolve_and_verify("bornhack.dk", ns, Config).
+t_edgedns_ns(_Config) ->
+    ok = resolve_and_verify("bornhack.dk", ns).
 
-t_edgedns_mx(Config) ->
-    ok = resolve_and_verify("bornhack.dk", mx, Config).
+t_edgedns_mx(_Config) ->
+    ok = resolve_and_verify("bornhack.dk", mx).
 
-t_edgedns_txt(Config) ->
-    ok = resolve_and_verify("bornhack.dk", mx, Config).
+t_edgedns_txt(_Config) ->
+    ok = resolve_and_verify("bornhack.dk", mx).
 
-t_edgedns_many_ips(Config) ->
-    ok = resolve_and_verify("amazon.com", a, Config).
+t_edgedns_many_ips(_Config) ->
+    ok = resolve_and_verify("amazon.com", a).
 
-t_edgedns_nonexisting_domain(Config) ->
-    ok = resolve_and_verify("ido.notexist", a, Config).
+t_edgedns_nonexisting_domain(_Config) ->
+    ok = resolve_and_verify("ido.notexist", a).
 
-t_edgedns_blocked(Config) ->
+t_edgedns_blocked(_Config) ->
     init_edgedns_and_dummydns([{blocking_threshold, 10}]),
-    DNSServer = ?config(edgedns_server, Config),
-    ?BORNHACK_A_LOOKUP(DNSServer),
+    edge_dns_lookup("bornhack.dk", a),
     timer:sleep(1000),
     LastLine = get_last_line("log/stats.log"),
     {_start, _end} = binary:match(LastLine, <<"dampening activated.">>),
     ok.
 
-t_edgedns_unblocked(Config) ->
+t_edgedns_unblocked(_Config) ->
     init_edgedns_and_dummydns([{blocking_threshold, 2000},
                                {decay_rate, 0.50},
                                {whitelist, ["127.0.0.1"]}]),
-    DNSServer = ?config(edgedns_server, Config),
-    ?BORNHACK_A_LOOKUP(DNSServer),
+    edge_dns_lookup("bornhack.dk", a),
     timer:sleep(2000),
     LastLine = get_last_line("log/stats.log"),
     {_start, _end} = binary:match(LastLine, <<"dampening removed.">>),
     ok.
 
-t_edgedns_whitelisted(Config) ->
+t_edgedns_whitelisted(_Config) ->
     ok = set_env_variables([{blocking_threshold, 10},
                             {whitelist, ["127.0.0.1"]}]),
     _ = start_edgedns_processes(),
-    DNSServer = ?config(edgedns_server, Config),
-    ok = run_test_queries(DNSServer),
+    edge_dns_lookup("bornhack.dk", a),
+    edge_dns_lookup("amazon.com", a),
+    edge_dns_lookup("ido.notexist", a),
     ok.
 
 t_edgedns_stats_log_test(_Config) ->
@@ -222,7 +221,7 @@ t_edgedns_stats_log_test(_Config) ->
 %%===================================================================
 %% @private
 start_dummy_dns_server() ->
-    {IP, Port} = ?DUMMY_DNS_SERVER,
+    {IP, Port} = edge_core_config:nameserver(),
     Requests2Response = #{
      ?BORNHACK_A_REQUEST    => ?BORNHACK_A_RESPONSE,
      ?BORNHACK_AAAA_REQUEST => ?BORNHACK_AAAA_RESPONSE,
@@ -275,11 +274,12 @@ verify_header(Header, ExpectedHeader) ->
     ok.
 
 %% @private
-resolve_and_verify(Domain, Type, Config) ->
+resolve_and_verify(Domain, Type) ->
     ok = init_edgedns_and_dummydns(),
-    EdgeDNS = ?config(edgedns_server, Config),
+    [EdgeDNS]= edge_core_config:listeners(),
+    DummyDNS = edge_core_config:nameserver(),
     {Status, ParsedResponse1} = inet_res:resolve(Domain, in, Type, [{nameservers, [EdgeDNS]}]),
-    {Status, ParsedResponse2} = inet_res:resolve(Domain, in, Type, [{nameservers, [?DUMMY_DNS_SERVER]}]),
+    {Status, ParsedResponse2} = inet_res:resolve(Domain, in, Type, [{nameservers, [DummyDNS]}]),
     case Status of
         ok ->
             verify_dns_response(ParsedResponse1, ParsedResponse2);
@@ -291,6 +291,13 @@ resolve_and_verify(Domain, Type, Config) ->
     end,
     ok.
 
+
+%% @private
+edge_dns_lookup(Domain, Type) ->
+    [{IP, Port}] = edge_core_config:listeners(),
+    inet_res:resolve(Domain, in, Type, [{nameservers, [{IP, Port}]}]).
+
+%% @private
 init_edgedns_and_dummydns() ->
     init_edgedns_and_dummydns([]).
 
