@@ -72,7 +72,8 @@ groups() ->
                        t_edgedns_many_ips,
                        t_edgedns_nonexisting_domain,
                        t_edgedns_blocked,
-                       t_edgedns_unblocked
+                       t_edgedns_unblocked,
+                       t_edgedns_whitelisted
                       ]}
     ].
 
@@ -81,12 +82,7 @@ groups() ->
 %%%===================================================================
 init_per_suite(Config) ->
     lager:start(),
-    [{unicast_server, {{89, 233, 43, 71}, 53}},
-     {anycast_server, {{91, 239, 100, 100}, 53}},
-     {google_server, {{8, 8, 8, 8}, 53}},
-     {edgedns_server, {{127, 0, 0, 1}, 5331}},
-     {edgedns_config, none}
-     | Config].
+    Config.
 
 end_per_suite(_Config) ->
     ok.
@@ -127,24 +123,31 @@ t_edgedns_start_and_shutdown(_Config) ->
     shutdown_edgedns_processe(Pids).
 
 t_edgedns_a(_Config) ->
+    ok = init_edgedns_and_dummydns(),
     ok = resolve_and_verify("bornhack.dk", a).
 
 t_edgedns_aaaa(_Config) ->
+    ok = init_edgedns_and_dummydns(),
     ok = resolve_and_verify("bornhack.dk", aaaa).
 
 t_edgedns_ns(_Config) ->
+    ok = init_edgedns_and_dummydns(),
     ok = resolve_and_verify("bornhack.dk", ns).
 
 t_edgedns_mx(_Config) ->
+    ok = init_edgedns_and_dummydns(),
     ok = resolve_and_verify("bornhack.dk", mx).
 
 t_edgedns_txt(_Config) ->
+    ok = init_edgedns_and_dummydns(),
     ok = resolve_and_verify("bornhack.dk", mx).
 
 t_edgedns_many_ips(_Config) ->
+    ok = init_edgedns_and_dummydns(),
     ok = resolve_and_verify("amazon.com", a).
 
 t_edgedns_nonexisting_domain(_Config) ->
+    ok = init_edgedns_and_dummydns(),
     ok = resolve_and_verify("ido.notexist", a).
 
 t_edgedns_blocked(_Config) ->
@@ -166,12 +169,11 @@ t_edgedns_unblocked(_Config) ->
     ok.
 
 t_edgedns_whitelisted(_Config) ->
-    ok = set_env_variables([{blocking_threshold, 10},
-                            {whitelist, ["127.0.0.1"]}]),
-    _ = start_edgedns_processes(),
-    edge_dns_lookup("bornhack.dk", a),
-    edge_dns_lookup("amazon.com", a),
-    edge_dns_lookup("ido.notexist", a),
+    init_edgedns_and_dummydns([{blocking_threshold, 10},
+                               {whitelist, ["127.0.0.1"]}]),
+    resolve_and_verify("bornhack.dk", a),
+    resolve_and_verify("amazon.com", a),
+    resolve_and_verify("ido.notexist", a),
     ok.
 
 t_edgedns_stats_log_test(_Config) ->
@@ -251,7 +253,6 @@ verify_header(Header, ExpectedHeader) ->
 
 %% @private
 resolve_and_verify(Domain, Type) ->
-    ok = init_edgedns_and_dummydns(),
     [EdgeDNS]= edge_core_config:listeners(),
     DummyDNS = edge_core_config:nameserver(),
     {Status, ParsedResponse1} = inet_res:resolve(Domain, in, Type, [{nameservers, [EdgeDNS]}]),

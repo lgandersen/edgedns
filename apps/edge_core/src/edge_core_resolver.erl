@@ -182,7 +182,6 @@ process_request(Sender, <<Id:2/binary, Request/binary>>, #state { pending_reques
 
     FullRequest = <<InternalId:2/binary, Request/binary>>,
     send_request(FullRequest, DNSServer),
-    stats_log:info("Incoming (no identifier): ~p", [Request]),
     InternalId.
 
 %% @private
@@ -193,7 +192,6 @@ process_response(<<InternalId:2/binary, Response/binary>>, #state { pending_requ
             true = ets:delete(Table, InternalId),
             FullResponse = <<Id:2/binary, Response/binary>>,
             {ListeningSocket, IP, Port} = Sender,
-            stats_log:info("Outgoing (no identifier): ~p", [Response]),
             send_response(ListeningSocket, IP, Port, FullResponse, State),
             edge_core_traffic_logger:log_query(IP, Request, Response),
             edge_core_traffic_monitor:register_lookup(IP, score(Request, Response));
