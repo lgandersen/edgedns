@@ -27,18 +27,26 @@
          t_lookup_unicast/1,
          t_lookup_anycast/1,
          t_edgedns_start_and_shutdown/1,
-         t_edgedns/1,
-         t_edgedns_many_types/1,
+         t_edgedns_a/1,
+         t_edgedns_aaaa/1,
+         t_edgedns_ns/1,
+         t_edgedns_mx/1,
+         t_edgedns_txt/1,
+         t_edgedns_many_ips/1,
+         t_edgedns_nonexisting_domain/1,
          t_edgedns_blocked/1,
          t_edgedns_unblocked/1,
-         t_edgedns_whitelisted/1
+         t_edgedns_whitelisted/1,
+         t_edgedns_stats_log_test/1
         ]).
 
 -include_lib("common_test/include/ct.hrl").
+-include_lib("test_queries.hrl").
 
+-define(DUMMY_DNS_SERVER, {{127, 0, 0, 1}, 8538}).
 -define(SET(List), sets:from_list(List)).
 -define(EDGEDNS_CONFIG(Key, Value), application:set_env(edge_core, Key, Value)).
--define(BORNHACK_LOOKUP(DNSServer), [{85,235,250,91}] = inet_res:lookup("bornhack.dk", in, a, [{nameservers, [DNSServer]}])).
+-define(BORNHACK_A_LOOKUP(DNSServer), [{85,235,250,91}] = inet_res:lookup("bornhack.dk", in, a, [{nameservers, [DNSServer]}])).
 
 all() ->
     [
@@ -68,9 +76,16 @@ groups() ->
         {inet_res, [], [t_connectivity]},
         {censurfridns_dk, [], [t_lookup_unicast, t_lookup_anycast]},
         {edgedns, [], [t_edgedns_start_and_shutdown,
-                       t_edgedns,
-                       t_edgedns_whitelisted,
-                       t_edgedns_many_types]}
+                       t_edgedns_a,
+                       t_edgedns_aaaa,
+                       t_edgedns_ns,
+                       t_edgedns_mx,
+                       t_edgedns_txt,
+                       t_edgedns_many_ips,
+                       t_edgedns_nonexisting_domain,
+                       t_edgedns_blocked,
+                       t_edgedns_unblocked
+                      ]}
     ].
 
 %%%===================================================================
@@ -135,33 +150,43 @@ t_edgedns_start_and_shutdown(_Config) ->
     Pids = start_edgedns_processes(),
     shutdown_edgedns_processe(Pids).
 
-t_edgedns(Config) ->
-    ok = set_env_variables(),
-    _ = start_edgedns_processes(),
-    DNSServer = ?config(edgedns_server, Config),
-    ok = run_test_queries(DNSServer),
-    ok.
+t_edgedns_a(Config) ->
+    ok = resolve_and_verify("bornhack.dk", a, Config).
+
+t_edgedns_aaaa(Config) ->
+    ok = resolve_and_verify("bornhack.dk", aaaa, Config).
+
+t_edgedns_ns(Config) ->
+    ok = resolve_and_verify("bornhack.dk", ns, Config).
+
+t_edgedns_mx(Config) ->
+    ok = resolve_and_verify("bornhack.dk", mx, Config).
+
+t_edgedns_txt(Config) ->
+    ok = resolve_and_verify("bornhack.dk", mx, Config).
+
+t_edgedns_many_ips(Config) ->
+    ok = resolve_and_verify("amazon.com", a, Config).
+
+t_edgedns_nonexisting_domain(Config) ->
+    ok = resolve_and_verify("ido.notexist", a, Config).
 
 t_edgedns_blocked(Config) ->
-    ok = set_env_variables([{blocking_threshold, 10}]),
-    Pids = start_edgedns_processes(),
+    init_edgedns_and_dummydns([{blocking_threshold, 10}]),
     DNSServer = ?config(edgedns_server, Config),
-    ?BORNHACK_LOOKUP(DNSServer),
-    shutdown_edgedns_processe(Pids),
+    ?BORNHACK_A_LOOKUP(DNSServer),
     timer:sleep(1000),
     LastLine = get_last_line("log/stats.log"),
     {_start, _end} = binary:match(LastLine, <<"dampening activated.">>),
     ok.
 
 t_edgedns_unblocked(Config) ->
-    ok = set_env_variables([{blocking_threshold, 2000},
-                            {decay_rate, 0.50},
-                            {whitelist, ["127.0.0.1"]}]),
-    Pids = start_edgedns_processes(),
+    init_edgedns_and_dummydns([{blocking_threshold, 2000},
+                               {decay_rate, 0.50},
+                               {whitelist, ["127.0.0.1"]}]),
     DNSServer = ?config(edgedns_server, Config),
-    ?BORNHACK_LOOKUP(DNSServer),
+    ?BORNHACK_A_LOOKUP(DNSServer),
     timer:sleep(2000),
-    shutdown_edgedns_processe(Pids),
     LastLine = get_last_line("log/stats.log"),
     {_start, _end} = binary:match(LastLine, <<"dampening removed.">>),
     ok.
@@ -174,16 +199,59 @@ t_edgedns_whitelisted(Config) ->
     ok = run_test_queries(DNSServer),
     ok.
 
-t_edgedns_many_types(Config) ->
-    ok = set_env_variables(),
-    _ = start_edgedns_processes(),
-    Types = [a, aaaa, ns, mx, txt],
-    lists:map(fun(Type) -> verify_dns_response(Config, Type) end, Types),
+t_edgedns_stats_log_test(_Config) ->
+    %% Aproximate score of this query (a bornhack.dk) is 3000.
+    %% FIXME not done.
+    Query = <<0,1,1,0,0,1,0,0,0,0,0,0,8,98,111,114,110,104,97,99,107,2,100,107,0,0,1,0,1>>,
+    ok = set_env_variables([{blocking_threshold, 4000},
+                            {silent, true},
+                            {decay_rate, 0.99},
+                            {stats_log_frequencey, 1},
+                            {whitelist, ["127.0.0.1", "13.37.13.37"]}]),
+    {Listener, _Logger, _Monitor} = start_edgedns_processes(),
+    Listener ! {udp, no_socket, {127,0,0,1}, no_port, Query},
+    Listener ! {udp, no_socket, {127,0,0,1}, no_port, Query},
+    Listener ! {udp, no_socket, {127,0,0,1}, no_port, Query},
+    Listener ! {udp, no_socket, {10,0,13,37}, no_port, Query},
+    Listener ! {udp, no_socket, {10,0,13,37}, no_port, Query},
+    timer:sleep(2000),
     ok.
 
 %%===================================================================
 %% Internal functions
 %%===================================================================
+%% @private
+start_dummy_dns_server() ->
+    {IP, Port} = ?DUMMY_DNS_SERVER,
+    Requests2Response = #{
+     ?BORNHACK_A_REQUEST    => ?BORNHACK_A_RESPONSE,
+     ?BORNHACK_AAAA_REQUEST => ?BORNHACK_AAAA_RESPONSE,
+     ?BORNHACK_NS_REQUEST   => ?BORNHACK_NS_RESPONSE,
+     ?BORNHACK_MX_REQUEST   => ?BORNHACK_MX_RESPONSE,
+     ?BORNHACK_TXT_REQUEST  => ?BORNHACK_TXT_RESPONSE,
+     ?BORNHACK_A_REQUEST    => ?BORNHACK_A_RESPONSE,
+     ?AMAZON_A_REQUEST      => ?AMAZON_A_RESPONSE,
+     ?DO_NOT_EXIST_REQUEST  => ?DO_NOT_EXIST_RESPONSE
+     },
+    Opts = [binary, inet, {ip, IP}, {active, true}, {reuseaddr, true}],
+    case gen_udp:open(Port, Opts) of
+        {ok, _Socket} ->
+            dummy_dns_server(Requests2Response);
+
+        {error, _} = Error ->
+            Error
+    end.
+
+dummy_dns_server(Requests2Response) ->
+    receive
+        {udp, Socket, IP, InPortNo, Packet} ->
+            <<Id:2/binary, Request/binary>> = Packet,
+            Response = maps:get(Request, Requests2Response),
+            gen_udp:send(Socket, IP, InPortNo, <<Id:2/binary, Response/binary>>),
+            dummy_dns_server(Requests2Response)
+    end.
+
+
 %% @private
 get_last_line(FilePath) ->
     {ok, LogRaw} = file:read_file(FilePath),
@@ -191,15 +259,45 @@ get_last_line(FilePath) ->
     LastLine.
 
 %% @private
-verify_dns_response(Config, Type) ->
-    EdgeDNS = ?config(edgedns_server, Config),
-    TestServer = ?config(unicast_server, Config),
-    {ok, {dns_rec, _Header1, QDList1, ANList1, NSList1, ARList1}} = inet_res:resolve("bornhack.dk", in, Type, [{nameservers, [EdgeDNS]}]),
-    {ok, {dns_rec, _Header2, QDList2, ANList2, NSList2, ARList2}} = inet_res:resolve("bornhack.dk", in, Type, [{nameservers, [TestServer]}]),
+verify_dns_response(Response, ExpectedResponse) ->
+    {dns_rec, Header1, QDList1, ANList1, NSList1, ARList1} = Response,
+    {dns_rec, Header2, QDList2, ANList2, NSList2, ARList2} = ExpectedResponse,
+    verify_header(Header1, Header2),
     true = ?SET(QDList1) =:= ?SET(QDList2),
     true = ?SET(ANList1) =:= ?SET(ANList2),
     true = ?SET(NSList1) =:= ?SET(NSList2),
     true = ?SET(ARList1) =:= ?SET(ARList2),
+    ok.
+
+verify_header(Header, ExpectedHeader) ->
+    {dns_header,_Id1,A,B,C,D,E,F,G,H} = Header,
+    {dns_header,_Id2,A,B,C,D,E,F,G,H} = ExpectedHeader,
+    ok.
+
+%% @private
+resolve_and_verify(Domain, Type, Config) ->
+    ok = init_edgedns_and_dummydns(),
+    EdgeDNS = ?config(edgedns_server, Config),
+    {Status, ParsedResponse1} = inet_res:resolve(Domain, in, Type, [{nameservers, [EdgeDNS]}]),
+    {Status, ParsedResponse2} = inet_res:resolve(Domain, in, Type, [{nameservers, [?DUMMY_DNS_SERVER]}]),
+    case Status of
+        ok ->
+            verify_dns_response(ParsedResponse1, ParsedResponse2);
+
+        error ->
+            {nxdomain, ParsedResponse1_} = ParsedResponse1,
+            {nxdomain, ParsedResponse2_} = ParsedResponse2,
+            verify_dns_response(ParsedResponse1_, ParsedResponse2_)
+    end,
+    ok.
+
+init_edgedns_and_dummydns() ->
+    init_edgedns_and_dummydns([]).
+
+init_edgedns_and_dummydns(EdgeDNSOpts) ->
+    ok = set_env_variables(EdgeDNSOpts),
+    spawn_link(fun () -> start_dummy_dns_server() end),
+    _ = start_edgedns_processes(),
     ok.
 
 %% @private
