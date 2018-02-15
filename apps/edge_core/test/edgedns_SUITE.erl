@@ -23,9 +23,6 @@
 
 %% test cases
 -export([
-         t_connectivity/1,
-         t_lookup_unicast/1,
-         t_lookup_anycast/1,
          t_edgedns_start_and_shutdown/1,
          t_edgedns_a/1,
          t_edgedns_aaaa/1,
@@ -50,14 +47,7 @@
 
 all() ->
     [
-     %% TODO: Group names here e.g. {group, crud}
-     %% Simple test of inet_res module and network io using google DNS
-     {group, inet_res},
-
-     %% Test that the censhipfree dns service works
-     {group, censurfridns_dk},
-
-     %% Actual tests of edgedns
+     %% Tests of edgedns
      {group, edgedns}
     ].
 
@@ -73,8 +63,6 @@ groups() ->
         %%          t_update_resource,
         %%          t_delete_resource
         %%         ]}
-        {inet_res, [], [t_connectivity]},
-        {censurfridns_dk, [], [t_lookup_unicast, t_lookup_anycast]},
         {edgedns, [], [t_edgedns_start_and_shutdown,
                        t_edgedns_a,
                        t_edgedns_aaaa,
@@ -133,18 +121,6 @@ end_per_testcase(_TestCase, _Config) ->
 %%%===================================================================
 %%% Individual Test Cases (from groups() definition)
 %%%===================================================================
-t_connectivity(Config) ->
-    DNSServer = ?config(google_server, Config),
-    ok = run_test_queries(DNSServer).
-
-t_lookup_unicast(Config) ->
-    DNSServer = ?config(unicast_server, Config),
-    ok = run_test_queries(DNSServer).
-
-t_lookup_anycast(Config) ->
-    DNSServer = ?config(anycast_server, Config),
-    ok = run_test_queries(DNSServer).
-
 t_edgedns_start_and_shutdown(_Config) ->
     ok = set_env_variables(),
     Pids = start_edgedns_processes(),
@@ -329,14 +305,3 @@ shutdown_edgedns_processe({Listener, Logger, Monitor}) ->
     exit(Listener, normal),
     exit(Logger, normal),
     exit(Monitor, normal).
-
-%% @private
-run_test_queries(DNSServer) ->
-    AmazonDotCom = sets:from_list([{205,251,242,103}, {176,32,98,166}, {176,32,103,205}]),
-    BornhackDotDk = [{85,235,250,91}],
-    NonExistingDomain = [],
-
-    BornhackDotDk = inet_res:lookup("bornhack.dk", in, a, [{nameservers, [DNSServer]}]),
-    AmazonDotCom = sets:from_list(inet_res:lookup("amazon.com", in, a, [{nameservers, [DNSServer]}])),
-    NonExistingDomain = inet_res:lookup("ido.notexist", in, a, [{nameservers, [DNSServer]}]),
-    ok.
