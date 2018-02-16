@@ -34,16 +34,14 @@
          t_edgedns_blocked/1,
          t_edgedns_unblocked/1,
          t_edgedns_whitelisted/1,
-         t_edgedns_stats_log_test/1
+         t_edgedns_stats_log/1
         ]).
 
 -include_lib("common_test/include/ct.hrl").
 -include_lib("test_queries.hrl").
 
--define(DUMMY_DNS_SERVER, {{127, 0, 0, 1}, 8538}).
 -define(SET(List), sets:from_list(List)).
 -define(EDGEDNS_CONFIG(Key, Value), application:set_env(edge_core, Key, Value)).
--define(BORNHACK_A_LOOKUP(DNSServer), [{85,235,250,91}] = inet_res:lookup("bornhack.dk", in, a, [{nameservers, [DNSServer]}])).
 
 all() ->
     [
@@ -73,7 +71,8 @@ groups() ->
                        t_edgedns_nonexisting_domain,
                        t_edgedns_blocked,
                        t_edgedns_unblocked,
-                       t_edgedns_whitelisted
+                       t_edgedns_whitelisted,
+                       t_edgedns_stats_log
                       ]}
     ].
 
@@ -123,31 +122,31 @@ t_edgedns_start_and_shutdown(_Config) ->
     shutdown_edgedns_processe(Pids).
 
 t_edgedns_a(_Config) ->
-    ok = init_edgedns_and_dummydns(),
+    init_edgedns_and_dummydns(),
     ok = resolve_and_verify("bornhack.dk", a).
 
 t_edgedns_aaaa(_Config) ->
-    ok = init_edgedns_and_dummydns(),
+    init_edgedns_and_dummydns(),
     ok = resolve_and_verify("bornhack.dk", aaaa).
 
 t_edgedns_ns(_Config) ->
-    ok = init_edgedns_and_dummydns(),
+    init_edgedns_and_dummydns(),
     ok = resolve_and_verify("bornhack.dk", ns).
 
 t_edgedns_mx(_Config) ->
-    ok = init_edgedns_and_dummydns(),
+    init_edgedns_and_dummydns(),
     ok = resolve_and_verify("bornhack.dk", mx).
 
 t_edgedns_txt(_Config) ->
-    ok = init_edgedns_and_dummydns(),
+    init_edgedns_and_dummydns(),
     ok = resolve_and_verify("bornhack.dk", mx).
 
 t_edgedns_many_ips(_Config) ->
-    ok = init_edgedns_and_dummydns(),
+    init_edgedns_and_dummydns(),
     ok = resolve_and_verify("amazon.com", a).
 
 t_edgedns_nonexisting_domain(_Config) ->
-    ok = init_edgedns_and_dummydns(),
+    init_edgedns_and_dummydns(),
     ok = resolve_and_verify("ido.notexist", a).
 
 t_edgedns_blocked(_Config) ->
@@ -176,16 +175,17 @@ t_edgedns_whitelisted(_Config) ->
     resolve_and_verify("ido.notexist", a),
     ok.
 
-t_edgedns_stats_log_test(_Config) ->
+t_edgedns_stats_log(_Config) ->
     %% Aproximate score of this query (a bornhack.dk) is 3000.
     %% FIXME not done.
     Query = <<0,1,1,0,0,1,0,0,0,0,0,0,8,98,111,114,110,104,97,99,107,2,100,107,0,0,1,0,1>>,
-    ok = set_env_variables([{blocking_threshold, 4000},
-                            {silent, true},
-                            {decay_rate, 0.99},
-                            {stats_log_frequencey, 1},
-                            {whitelist, ["127.0.0.1", "13.37.13.37"]}]),
-    {Listener, _Logger, _Monitor} = start_edgedns_processes(),
+    {Listener, _, _} = init_edgedns_and_dummydns([
+                                                  {blocking_threshold, 4000},
+                                                  {silent, true},
+                                                  {decay_rate, 0.99},
+                                                  {stats_log_frequencey, 1},
+                                                  {whitelist, ["127.0.0.1", "13.37.13.37"]}
+                                                 ]),
     Listener ! {udp, no_socket, {127,0,0,1}, no_port, Query},
     Listener ! {udp, no_socket, {127,0,0,1}, no_port, Query},
     Listener ! {udp, no_socket, {127,0,0,1}, no_port, Query},
@@ -281,8 +281,7 @@ init_edgedns_and_dummydns() ->
 init_edgedns_and_dummydns(EdgeDNSOpts) ->
     ok = set_env_variables(EdgeDNSOpts),
     spawn_link(fun () -> start_dummy_dns_server() end),
-    _ = start_edgedns_processes(),
-    ok.
+    start_edgedns_processes().
 
 %% @private
 set_env_variables() ->
