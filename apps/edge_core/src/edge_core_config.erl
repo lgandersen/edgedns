@@ -12,7 +12,7 @@
          port_range_resolvers/0,
          nameserver/0,
          decay_rate/0,
-         no_blocking/0,
+         enable_dampening/0,
          whitelist/0,
          silent/0,
          query_log/0,
@@ -20,9 +20,9 @@
          stats_log_frequencey/0
         ]).
 
--spec no_blocking() -> boolean().
-no_blocking() ->
-    get_value(no_blocking).
+-spec enable_dampening() -> boolean().
+enable_dampening() ->
+    get_value(enable_dampening).
 
 -spec listeners() -> inet:port_number().
 listeners() ->

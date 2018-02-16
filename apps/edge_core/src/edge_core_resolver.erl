@@ -43,7 +43,7 @@
           blocking_threshold :: pos_integer(),
           dns_server         :: {gen_udp:socket(), inet:ip_address(), inet:port_number()},
           last_id            :: integer(),
-          no_blocking         :: boolean(),
+          enable_dampening        :: boolean(),
           silent             :: boolean(),
           pending_requests   :: ets:tid()}).
 
@@ -85,7 +85,7 @@ init([LocalPort, DNSServerIP, DNSServerPort]) ->
                                  silent              = edge_core_config:silent(),
                                  last_id             = rand:uniform(round(math:pow(2, 16)) - 1),
                                  blocking_threshold  = edge_core_config:blocking_threshold(),
-                                 no_blocking         = edge_core_config:no_blocking(),
+                                 enable_dampening    = edge_core_config:enable_dampening(),
                                  socket              = Socket },
             make_cleanup_reminder(),
             {ok, active, StateData};
@@ -134,16 +134,16 @@ active(info, cleanup_table, #state { pending_requests = Table } = State) ->
 %% Internal functions
 %%===================================================================
 %% @private
-process_request(Score, not_whitelisted, Sender, Request, #state { no_blocking        = NoBlocking,
+process_request(Score, not_whitelisted, Sender, Request, #state { enable_dampening   = DampeningEnabled,
                                                                   blocking_threshold = BlockingThreshold } = State) when Score > BlockingThreshold ->
     %% Ip is in the table and above threshold
     edge_core_traffic_monitor:register_query_status(blocked),
-    case NoBlocking of
-        false ->
+    case DampeningEnabled of
+        true ->
             %% FIXME here should be an increase in score that does not depend on a response
             State;
 
-        true ->
+        false ->
             forward_request(Sender, Request, State)
     end;
 
