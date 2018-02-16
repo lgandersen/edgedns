@@ -69,7 +69,7 @@ stats_log() ->
 
 -spec stats_log_frequencey() -> pos_integer().
 stats_log_frequencey() ->
-    1000 * get_value(stats_log_frequencey, 60).
+    round(1000 * get_value(stats_log_frequencey, 60)).
 
 %% @private
 -spec parse_address(string()) -> inet:ip().
