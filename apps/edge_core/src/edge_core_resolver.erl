@@ -106,22 +106,13 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %% States
 %%===================================================================
 %% @private
-active(cast, {resolve, {Socket, IP, Port, Request}}, #state { blocking_threshold = BlockingThreshold,
-                                                                 no_blocking        = DoNothing,
-                                                                 last_id            = LastId } = State) ->
+active(cast, {resolve, {Socket, IP, Port, Request}}, State) ->
     %% Received a request to resolve at the DNS server
-    IsBlocked = is_blocked(IP, BlockingThreshold),
-    NextId = case {IsBlocked, DoNothing} of
-         {true, false} ->
-            LastId;
-
-         {true, true} ->
-            process_request({Socket, IP, Port}, Request, State);
-
-         {false, _} ->
-            process_request({Socket, IP, Port}, Request, State)
-    end,
-    {keep_state, State#state { last_id = NextId }};
+    Scoring = lookup_score(IP),
+    Whitelisted = whitelisted(IP),
+    Sender = {Socket, IP, Port},
+    NewState = process_request(Scoring, Whitelisted, Sender, Request, State),
+    {keep_state, NewState};
 
 %% Got a response for the DNS server
 active(info, {udp, Socket, _DNSServerIP, _DNSServerPort, Response}, State) ->
@@ -129,7 +120,7 @@ active(info, {udp, Socket, _DNSServerIP, _DNSServerPort, Response}, State) ->
     inet:setopts(Socket, [{active, once}]),
     {keep_state, State};
 
-active(info, cleanup_table, #state { pending_requests = Table } = StateData) ->
+active(info, cleanup_table, #state { pending_requests = Table } = State) ->
     Now = erlang:system_time(second),
     MatchSpec = ets:fun2ms(
         fun({_, _, _, _, _, _, Timestamp})
@@ -137,52 +128,50 @@ active(info, cleanup_table, #state { pending_requests = Table } = StateData) ->
         end),
     _NumDeleted = ets:select_delete(Table, MatchSpec),
     make_cleanup_reminder(),
-    {keep_state, StateData}.
+    {keep_state, State}.
 
 %%===================================================================
 %% Internal functions
 %%===================================================================
 %% @private
--spec is_blocked(inet:ip(), pos_integer()) -> boolean().
-is_blocked(IP, BlockingThreshold) ->
-    ScoreLookup = ets:lookup(?SCORE_TABLE, IP),
-    WhiteListed = ets:lookup(?WHITELIST, IP),
-    case {ScoreLookup, WhiteListed} of
-        {[], []} ->
-            %% Allowed, not whitelisted
-            edge_core_traffic_monitor:register_query_status(allowed),
-            false;
+process_request(Score, false, Sender, Request, #state { no_blocking        = NoBlocking,
+                                                        blocking_threshold = BlockingThreshold } = State) when Score > BlockingThreshold ->
+    %% Ip is in the table and above threshold
+    edge_core_traffic_monitor:register_query_status(blocked),
+    case NoBlocking of
+        false ->
+            %% FIXME here should be an increase in score that does not depend on a response
+            State;
 
-        {_, [{IP}]} ->
-            %% Whitelisted and thus not blocked
-            edge_core_traffic_monitor:register_query_status(whitelisted),
-            false;
+        true ->
+            forward_request(Sender, Request, State)
+    end;
 
-        {[{IP, Score}], _} when Score > BlockingThreshold ->
-            %% Ip is in the table and above threshold
-            edge_core_traffic_monitor:register_query_status(blocked),
-            true;
+process_request(Score, false, Sender, Request, #state { blocking_threshold = BlockingThreshold } = State) when Score =< BlockingThreshold ->
+    %% Ip is in the table and below threshold
+    edge_core_traffic_monitor:register_query_status(allowed),
+    forward_request(Sender, Request, State);
 
-        {[{IP, Score}], _} when Score =< BlockingThreshold ->
-            %% Ip is in the table and below threshold
-            edge_core_traffic_monitor:register_query_status(allowed),
-            false
-    end.
+process_request(_Score, true, Sender, Request, State) ->
+    %% Whitelisted and thus not blocked
+    edge_core_traffic_monitor:register_query_status(whitelisted),
+    forward_request(Sender, Request, State).
 
 
 %% @private
-process_request(Sender, <<Id:2/binary, Request/binary>>, #state { pending_requests = Table,
+forward_request(Sender, <<Id:2/binary, Request/binary>>, #state { pending_requests = Table,
                                                                   last_id          = LastInternalId,
-                                                                  dns_server       = DNSServer }) ->
+                                                                  dns_server       = DNSServer } = State) ->
     InternalIdInteger = next_id(LastInternalId),
     InternalId = <<InternalIdInteger:16/big-integer>>,
 
     Element = {InternalId, Id, Sender, Request, erlang:system_time(second)},
     true = ets:insert(Table, Element),
 
-    FullRequest = <<InternalId:2/binary, Request/binary>>,
-    send_request(FullRequest, DNSServer),
-    InternalId.
+    send_request(<<InternalId:2/binary, Request/binary>>, DNSServer),
+
+    State#state { last_id = InternalIdInteger}.
+
 
 %% @private
 process_response(<<InternalId:2/binary, Response/binary>>, #state { pending_requests = Table} = State) ->
@@ -193,7 +182,7 @@ process_response(<<InternalId:2/binary, Response/binary>>, #state { pending_requ
             FullResponse = <<Id:2/binary, Response/binary>>,
             {ListeningSocket, IP, Port} = Sender,
             send_response(ListeningSocket, IP, Port, FullResponse, State),
-            edge_core_traffic_logger:log_query(IP, Request, Response),
+            edge_core_traffic_logger:log_query(IP, Request, FullResponse),
             edge_core_traffic_monitor:register_lookup(IP, score(Request, Response));
 
         [] ->
@@ -222,8 +211,30 @@ score(Request, Response) ->
 
 -define(MAX_INT16, 65535).
 
+%% @private
 next_id(LastId) ->
     ((LastId + 1) rem ?MAX_INT16) + 1.
 
+%% @private
 make_cleanup_reminder() ->
     erlang:send_after(5000, self(), cleanup_table).
+
+%% @private
+lookup_score(IP) ->
+    case ets:lookup(?SCORE_TABLE, IP) of
+        [] ->
+            0;
+
+        [{_IP, Score}] ->
+            Score
+    end.
+
+%% @private
+whitelisted(IP) ->
+    case ets:lookup(?WHITELIST, IP) of
+        [] ->
+            false;
+
+        [{IP}] ->
+            true
+    end.
