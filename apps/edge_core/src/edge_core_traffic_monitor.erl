@@ -11,7 +11,7 @@
 
 %% API
 -export([start_link/0,
-         register_lookup/2,
+         register_lookup/3,
          register_query_status/1,
          reset_stat_table/0,
          get_dampened_ip_masks/0
@@ -47,8 +47,8 @@
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
-register_lookup(IP, Score) ->
-    gen_server:cast(?SERVER, {register_lookup, IP, Score}).
+register_lookup(Whitelisted, IP, Score) ->
+    gen_server:cast(?SERVER, {register_lookup, Whitelisted, IP, Score}).
 
 register_query_status(Status) ->
     gen_server:cast(?SERVER, {register_query_status, Status}).
@@ -85,7 +85,10 @@ handle_cast({register_query_status, Status}, State) ->
     {noreply, State};
 
 %% @private
-handle_cast({register_lookup, IP, Score}, State = #state {blocking_threshold = Threshold }) ->
+handle_cast({register_lookup, whitelisted, _IP, _Score}, State) ->
+    {noreply, State};
+
+handle_cast({register_lookup, not_whitelisted, IP, Score}, State = #state {blocking_threshold = Threshold }) ->
     Default = {IP, 0},
     UpdateOps = [{2, Score}],
     [NewScore] = ets:update_counter(?SCORE_TABLE, IP, UpdateOps, Default),

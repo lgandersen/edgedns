@@ -107,15 +107,15 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%===================================================================
 %% @private
 active(cast, {resolve, {Socket, IP, Port, Request}}, State) ->
-    %% Received a request to resolve at the DNS server
+    %% Received a request to resolve by the upstream DNS server
     Scoring = lookup_score(IP),
     Whitelisted = whitelisted(IP),
     Sender = {Socket, IP, Port},
     NewState = process_request(Scoring, Whitelisted, Sender, Request, State),
     {keep_state, NewState};
 
-%% Got a response for the DNS server
 active(info, {udp, Socket, _DNSServerIP, _DNSServerPort, Response}, State) ->
+    %% Got a response from the upstream DNS server
     process_response(Response, State),
     inet:setopts(Socket, [{active, once}]),
     {keep_state, State};
@@ -134,8 +134,8 @@ active(info, cleanup_table, #state { pending_requests = Table } = State) ->
 %% Internal functions
 %%===================================================================
 %% @private
-process_request(Score, false, Sender, Request, #state { no_blocking        = NoBlocking,
-                                                        blocking_threshold = BlockingThreshold } = State) when Score > BlockingThreshold ->
+process_request(Score, not_whitelisted, Sender, Request, #state { no_blocking        = NoBlocking,
+                                                                  blocking_threshold = BlockingThreshold } = State) when Score > BlockingThreshold ->
     %% Ip is in the table and above threshold
     edge_core_traffic_monitor:register_query_status(blocked),
     case NoBlocking of
@@ -147,12 +147,12 @@ process_request(Score, false, Sender, Request, #state { no_blocking        = NoB
             forward_request(Sender, Request, State)
     end;
 
-process_request(Score, false, Sender, Request, #state { blocking_threshold = BlockingThreshold } = State) when Score =< BlockingThreshold ->
+process_request(Score, not_whitelisted, Sender, Request, #state { blocking_threshold = BlockingThreshold } = State) when Score =< BlockingThreshold ->
     %% Ip is in the table and below threshold
     edge_core_traffic_monitor:register_query_status(allowed),
     forward_request(Sender, Request, State);
 
-process_request(_Score, true, Sender, Request, State) ->
+process_request(_Score, whitelisted, Sender, Request, State) ->
     %% Whitelisted and thus not blocked
     edge_core_traffic_monitor:register_query_status(whitelisted),
     forward_request(Sender, Request, State).
@@ -183,7 +183,7 @@ process_response(<<InternalId:2/binary, Response/binary>>, #state { pending_requ
             {ListeningSocket, IP, Port} = Sender,
             send_response(ListeningSocket, IP, Port, FullResponse, State),
             edge_core_traffic_logger:log_query(IP, Request, FullResponse),
-            edge_core_traffic_monitor:register_lookup(IP, score(Request, Response));
+            edge_core_traffic_monitor:register_lookup(whitelisted(IP), IP, score(Request, Response));
 
         [] ->
             lager:warning("Error looking up pending query in table!")
@@ -233,8 +233,8 @@ lookup_score(IP) ->
 whitelisted(IP) ->
     case ets:lookup(?WHITELIST, IP) of
         [] ->
-            false;
+            not_whitelisted;
 
         [{IP}] ->
-            true
+            whitelisted
     end.

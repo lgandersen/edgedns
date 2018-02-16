@@ -81,7 +81,7 @@ handle_cast({log_query, {IP, Query, Response}}, State) ->
             query_log:info("~p|~p|~p|~p|~p~n", Log);
 
         Other ->
-            lager:warning("kunne ikke dekode dns-svar: ~p", [Other])
+            lager:warning("Unable to decode DNS response: ~p", [Other])
     end,
     {noreply, State};
 
@@ -100,7 +100,7 @@ handle_cast(_Msg, State) ->
 handle_info(log_stats, #state { logging_frequency = NextLogging } = State) ->
     NDampened = edge_core_traffic_monitor:get_dampened_ip_masks(),
     {Blocked, Allowed, Whitelisted} = log_stats(),
-    stats_log:info("dampened: ~p - queries ~p/~p/~p~n", [NDampened, Blocked, Allowed, Whitelisted]),
+    stats_log:info("dampened ips: ~p - queries ~p/~p/~p~n", [NDampened, Blocked, Allowed, Whitelisted]),
     timer:send_after(NextLogging, log_stats),
     {noreply, State};
 

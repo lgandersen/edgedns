@@ -34,7 +34,9 @@
          t_edgedns_blocked/1,
          t_edgedns_unblocked/1,
          t_edgedns_whitelisted/1,
-         t_edgedns_stats_log/1
+         t_edgedns_stats_log_whitelisted/1,
+         t_edgedns_stats_log_dampened/1,
+         t_edgedns_stats_log_allowed/1
         ]).
 
 -include_lib("common_test/include/ct.hrl").
@@ -72,7 +74,9 @@ groups() ->
                        t_edgedns_blocked,
                        t_edgedns_unblocked,
                        t_edgedns_whitelisted,
-                       t_edgedns_stats_log
+                       t_edgedns_stats_log_whitelisted,
+                       t_edgedns_stats_log_dampened,
+                       t_edgedns_stats_log_allowed
                       ]}
     ].
 
@@ -160,9 +164,9 @@ t_edgedns_blocked(_Config) ->
 t_edgedns_unblocked(_Config) ->
     init_edgedns_and_dummydns([{blocking_threshold, 2000},
                                {decay_rate, 0.50},
-                               {whitelist, ["127.0.0.1"]}]),
+                               {whitelist, []}]),
     edge_dns_lookup("bornhack.dk", a),
-    timer:sleep(2000),
+    timer:sleep(2500),
     LastLine = get_last_line("log/stats.log"),
     {_start, _end} = binary:match(LastLine, <<"dampening removed.">>),
     ok.
@@ -175,10 +179,10 @@ t_edgedns_whitelisted(_Config) ->
     resolve_and_verify("ido.notexist", a),
     ok.
 
-t_edgedns_stats_log(_Config) ->
-    %% Aproximate score of this query (a bornhack.dk) is 3000.
-    %% FIXME not done.
-    Query = <<0,1,1,0,0,1,0,0,0,0,0,0,8,98,111,114,110,104,97,99,107,2,100,107,0,0,1,0,1>>,
+%% Aproximate score of this query (a bornhack.dk) is 3000.
+-define(TEST_QUERY, <<0,1,1,0,0,1,0,0,0,0,0,0,8,98,111,114,110,104,97,99,107,2,100,107,0,0,1,0,1>>).
+
+t_edgedns_stats_log_whitelisted(_Config) ->
     {Listener, _, _} = init_edgedns_and_dummydns([
                                                   {blocking_threshold, 4000},
                                                   {silent, true},
@@ -186,13 +190,55 @@ t_edgedns_stats_log(_Config) ->
                                                   {stats_log_frequencey, 1},
                                                   {whitelist, ["127.0.0.1", "13.37.13.37"]}
                                                  ]),
-    Listener ! {udp, no_socket, {127,0,0,1}, no_port, Query},
-    Listener ! {udp, no_socket, {127,0,0,1}, no_port, Query},
-    Listener ! {udp, no_socket, {127,0,0,1}, no_port, Query},
-    Listener ! {udp, no_socket, {10,0,13,37}, no_port, Query},
-    Listener ! {udp, no_socket, {10,0,13,37}, no_port, Query},
-    timer:sleep(2000),
+    Listener ! {udp, no_socket, {127,0,0,1}, no_port, ?TEST_QUERY},
+    Listener ! {udp, no_socket, {127,0,0,1}, no_port, ?TEST_QUERY},
+    Listener ! {udp, no_socket, {127,0,0,1}, no_port, ?TEST_QUERY},
+    Listener ! {udp, no_socket, {13,37,13,37}, no_port, ?TEST_QUERY},
+    Listener ! {udp, no_socket, {13,37,13,37}, no_port, ?TEST_QUERY},
+    Listener ! {udp, no_socket, {13,37,13,37}, no_port, ?TEST_QUERY},
+    timer:sleep(2500),
+    LastLine = get_last_line("log/stats.log"),
+    {_start, _end} = binary:match(LastLine, <<"dampened ips: 0 - queries 0/0/6">>),
     ok.
+
+t_edgedns_stats_log_dampened(_Config) ->
+    {Listener, _, _} = init_edgedns_and_dummydns([
+                                                  {blocking_threshold, 4000},
+                                                  {silent, true},
+                                                  {decay_rate, 0.99},
+                                                  {stats_log_frequencey, 1},
+                                                  {whitelist, []}
+                                                 ]),
+    Listener ! {udp, no_socket, {127,0,0,1}, no_port, ?TEST_QUERY},
+    Listener ! {udp, no_socket, {127,0,0,1}, no_port, ?TEST_QUERY},
+    Listener ! {udp, no_socket, {127,0,0,1}, no_port, ?TEST_QUERY},
+    Listener ! {udp, no_socket, {10,0,13,37}, no_port, ?TEST_QUERY},
+    Listener ! {udp, no_socket, {10,0,13,37}, no_port, ?TEST_QUERY},
+    Listener ! {udp, no_socket, {10,0,13,37}, no_port, ?TEST_QUERY},
+    timer:sleep(2500),
+    LastLine = get_last_line("log/stats.log"),
+    {_start, _end} = binary:match(LastLine, <<"dampened ips: 2 - queries 0/6/0">>),
+    ok.
+
+t_edgedns_stats_log_allowed(_Config) ->
+    {Listener, _, _} = init_edgedns_and_dummydns([
+                                                  {blocking_threshold, 9999999},
+                                                  {silent, true},
+                                                  {decay_rate, 0.99},
+                                                  {stats_log_frequencey, 1},
+                                                  {whitelist, []}
+                                                 ]),
+    Listener ! {udp, no_socket, {127,0,0,1}, no_port, ?TEST_QUERY},
+    Listener ! {udp, no_socket, {127,0,0,1}, no_port, ?TEST_QUERY},
+    Listener ! {udp, no_socket, {127,0,0,1}, no_port, ?TEST_QUERY},
+    Listener ! {udp, no_socket, {10,0,13,37}, no_port, ?TEST_QUERY},
+    Listener ! {udp, no_socket, {10,0,13,37}, no_port, ?TEST_QUERY},
+    Listener ! {udp, no_socket, {10,0,13,37}, no_port, ?TEST_QUERY},
+    timer:sleep(2500),
+    LastLine = get_last_line("log/stats.log"),
+    {_start, _end} = binary:match(LastLine, <<"dampened ips: 0 - queries 0/6/0">>),
+    ok.
+
 
 %%===================================================================
 %% Internal functions
