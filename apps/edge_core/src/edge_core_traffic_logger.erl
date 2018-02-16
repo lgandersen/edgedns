@@ -85,13 +85,6 @@ handle_cast({log_query, {IP, Query, Response}}, State) ->
     end,
     {noreply, State};
 
-handle_cast(log_stats, #state { logging_frequency = NextLogging } = State) ->
-    NDampened = edge_core_traffic_monitor:get_dampened_ip_masks(),
-    {Blocked, Allowed, Whitelisted} = log_stats(),
-    stats_log:info("dampened: ~p - queries ~p/~p/~p~n", [NDampened, Blocked, Allowed, Whitelisted]),
-    timer:send_after(NextLogging, log_stats),
-    {noreply, State};
-
 handle_cast({dampening_activated, IP}, State) ->
     stats_log:info("~p dampening activated.~n", [IP]),
     {noreply, State};
@@ -100,11 +93,17 @@ handle_cast({dampening_removed, IP}, State) ->
     stats_log:info("~p dampening removed.~n", [IP]),
     {noreply, State};
 
-
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
 %% @private
+handle_info(log_stats, #state { logging_frequency = NextLogging } = State) ->
+    NDampened = edge_core_traffic_monitor:get_dampened_ip_masks(),
+    {Blocked, Allowed, Whitelisted} = log_stats(),
+    stats_log:info("dampened: ~p - queries ~p/~p/~p~n", [NDampened, Blocked, Allowed, Whitelisted]),
+    timer:send_after(NextLogging, log_stats),
+    {noreply, State};
+
 handle_info(_Info, State) ->
     {noreply, State}.
 
