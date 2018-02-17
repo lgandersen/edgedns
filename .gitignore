@@ -1,3 +1,5 @@
 _build/
-vim_*
+vim
 log/
+config/sys.config
+config/test.config
