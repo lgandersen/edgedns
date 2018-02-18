@@ -15,8 +15,6 @@
          enable_dampening/0,
          whitelist/0,
          silent/0,
-         query_log/0,
-         stats_log/0,
          stats_log_frequencey/0
         ]).
 
@@ -56,16 +54,8 @@ silent() ->
 
 -spec whitelist() -> [inet:ip()].
 whitelist() ->
-    Whitelist = get_value(whitelist),
+    Whitelist = get_value(whitelist, []),
     [parse_address(Address) || Address <- Whitelist].
-
--spec query_log() -> string().
-query_log() ->
-    get_value(query_log, no_file).
-
--spec stats_log() -> string().
-stats_log() ->
-    get_value(stats_log, no_file).
 
 -spec stats_log_frequencey() -> pos_integer().
 stats_log_frequencey() ->

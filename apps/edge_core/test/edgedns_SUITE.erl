@@ -152,12 +152,14 @@ t_edgedns_many_ips(_Config) ->
 t_edgedns_nonexisting_domain(_Config) ->
     init_edgedns_and_dummydns(),
     ok = resolve_and_verify("ido.notexist", a).
+%log/query.statistics.log
+-define(STATS_LOG, "log/query_stats.log").
 
 t_edgedns_blocked(_Config) ->
     init_edgedns_and_dummydns([{blocking_threshold, 10}]),
     edge_dns_lookup("bornhack.dk", a),
     timer:sleep(1000),
-    LastLine = get_last_line("log/stats.log"),
+    LastLine = get_last_line(?STATS_LOG),
     {_start, _end} = binary:match(LastLine, <<"dampening activated.">>),
     ok.
 
@@ -167,7 +169,7 @@ t_edgedns_unblocked(_Config) ->
                                {whitelist, []}]),
     edge_dns_lookup("bornhack.dk", a),
     timer:sleep(2500),
-    LastLine = get_last_line("log/stats.log"),
+    LastLine = get_last_line(?STATS_LOG),
     {_start, _end} = binary:match(LastLine, <<"dampening removed.">>),
     ok.
 
@@ -197,7 +199,7 @@ t_edgedns_stats_log_whitelisted(_Config) ->
     Listener ! {udp, no_socket, {13,37,13,37}, no_port, ?TEST_QUERY},
     Listener ! {udp, no_socket, {13,37,13,37}, no_port, ?TEST_QUERY},
     timer:sleep(2500),
-    LastLine = get_last_line("log/stats.log"),
+    LastLine = get_last_line(?STATS_LOG),
     {_start, _end} = binary:match(LastLine, <<"dampened ips: 0 - queries 0/0/6">>),
     ok.
 
@@ -216,7 +218,7 @@ t_edgedns_stats_log_dampened(_Config) ->
     Listener ! {udp, no_socket, {10,0,13,37}, no_port, ?TEST_QUERY},
     Listener ! {udp, no_socket, {10,0,13,37}, no_port, ?TEST_QUERY},
     timer:sleep(2500),
-    LastLine = get_last_line("log/stats.log"),
+    LastLine = get_last_line(?STATS_LOG),
     {_start, _end} = binary:match(LastLine, <<"dampened ips: 2 - queries 0/6/0">>),
     ok.
 
@@ -235,7 +237,7 @@ t_edgedns_stats_log_allowed(_Config) ->
     Listener ! {udp, no_socket, {10,0,13,37}, no_port, ?TEST_QUERY},
     Listener ! {udp, no_socket, {10,0,13,37}, no_port, ?TEST_QUERY},
     timer:sleep(2500),
-    LastLine = get_last_line("log/stats.log"),
+    LastLine = get_last_line(?STATS_LOG),
     {_start, _end} = binary:match(LastLine, <<"dampened ips: 0 - queries 0/6/0">>),
     ok.
 
@@ -334,6 +336,13 @@ set_env_variables() ->
     set_env_variables([]).
 
 set_env_variables(Options) ->
+    Defaults = [
+                {nameserver, {"127.0.0.1", 8538}}
+               ],
+    lists:foreach(
+      fun({Key, Value}) ->
+              ?EDGEDNS_CONFIG(Key, Value)
+    end, Defaults),
     lists:foreach(
       fun({Key, Value}) ->
               ?EDGEDNS_CONFIG(Key, Value)

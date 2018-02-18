@@ -31,7 +31,24 @@
 
 -define(LOG_TABLE, log_table).
 
--record(state, { logging_frequency }).
+-record(state, {logging_frequency,
+                query_log
+               }).
+
+-ifdef(query_logging).
+
+-define(QUERY_LOG, ?query_logging).
+-define(QUERY_LOG(IP, Query, Response),
+    gen_server:cast(?SERVER, {log_query, {IP, Query, Response}})
+).
+
+-else.
+
+-define(QUERY_LOG, no_file).
+-define(QUERY_LOG(IP, Query, Response), ok).
+
+-endif.
+
 
 %%%===================================================================
 %%% API
@@ -46,8 +63,8 @@
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
-log_query(IP, Query, Response) ->
-    gen_server:cast(?SERVER, {log_query, {IP, Query, Response}}).
+log_query(_IP, _Query, _Response) ->
+    ?QUERY_LOG(_IP, _Query, _Response).
 
 dampening_activated(IP) ->
     gen_server:cast(?SERVER, {dampening_activated, IP}).
@@ -58,12 +75,13 @@ dampening_removed(IP) ->
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
-
 %% @private
 init([]) ->
     LoggingFrequency = edge_core_config:stats_log_frequencey(),
     timer:send_after(LoggingFrequency, log_stats),
-    {ok, #state { logging_frequency = LoggingFrequency }}.
+    {ok, #state { logging_frequency = LoggingFrequency,
+                  query_log         = open_file(?QUERY_LOG)
+                }}.
 
 %% @private
 handle_call(_Request, _From, State) ->
@@ -71,14 +89,14 @@ handle_call(_Request, _From, State) ->
     {reply, Reply, State}.
 
 %% @private
-handle_cast({log_query, {IP, Query, Response}}, State) ->
+handle_cast({log_query, {IP, Query, Response}}, #state { query_log = LogFile } = State) ->
     %% FIXME this should be enabled through a macro such that no query-parsing is
     %% taking place unless this full logging is turned on
     case inet_dns:decode(Response) of
         {ok, Data} ->
             [QueryType] = extract_query_type(Data),
-            Log = [IP, erlang:system_time(milli_seconds), size(Query), size(Response), QueryType],
-            query_log:info("~p|~p|~p|~p|~p~n", Log);
+            LogEntry = [IP, erlang:system_time(milli_seconds), size(Query), size(Response), QueryType],
+            io:fwrite(LogFile, "~p|~p|~p|~p|~p~n", LogEntry);
 
         Other ->
             lager:warning("Unable to decode DNS response: ~p", [Other])
@@ -86,11 +104,11 @@ handle_cast({log_query, {IP, Query, Response}}, State) ->
     {noreply, State};
 
 handle_cast({dampening_activated, IP}, State) ->
-    stats_log:info("~p dampening activated.~n", [IP]),
+    lager:info("~p dampening activated.~n", [IP]),
     {noreply, State};
 
 handle_cast({dampening_removed, IP}, State) ->
-    stats_log:info("~p dampening removed.~n", [IP]),
+    lager:info("~p dampening removed.~n", [IP]),
     {noreply, State};
 
 handle_cast(_Msg, State) ->
@@ -100,7 +118,7 @@ handle_cast(_Msg, State) ->
 handle_info(log_stats, #state { logging_frequency = NextLogging } = State) ->
     NDampened = edge_core_traffic_monitor:get_dampened_ip_masks(),
     {Blocked, Allowed, Whitelisted} = log_stats(),
-    stats_log:info("dampened ips: ~p - queries ~p/~p/~p~n", [NDampened, Blocked, Allowed, Whitelisted]),
+    lager:info("dampened ips: ~p - queries ~p/~p/~p~n", [NDampened, Blocked, Allowed, Whitelisted]),
     timer:send_after(NextLogging, log_stats),
     {noreply, State};
 
@@ -137,3 +155,12 @@ extract_query_type([{dns_query, _Name, Type, _Class} | Rest], Types) ->
 
 extract_query_type([], Types) ->
     Types.
+
+ %% @private
+-spec open_file(string()) -> file:io_device().
+open_file(no_file) ->
+    no_file;
+
+open_file(FileName) ->
+    {ok, LogFile} = file:open(FileName, [write]),
+    LogFile.
