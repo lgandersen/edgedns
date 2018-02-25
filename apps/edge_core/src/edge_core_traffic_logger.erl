@@ -16,6 +16,7 @@
 %% API
 -export([start_link/0,
          log_query/3,
+         stats_log/2,
          dampening_activated/1,
          dampening_removed/1]).
 
@@ -104,11 +105,11 @@ handle_cast({log_query, {IP, Query, Response}}, #state { query_log = LogFile } =
     {noreply, State};
 
 handle_cast({dampening_activated, IP}, State) ->
-    lager:info("~p dampening activated.~n", [IP]),
+    stats_log("~p dampening activated.~n", [IP]),
     {noreply, State};
 
 handle_cast({dampening_removed, IP}, State) ->
-    lager:info("~p dampening removed.~n", [IP]),
+    stats_log("~p dampening removed.~n", [IP]),
     {noreply, State};
 
 handle_cast(_Msg, State) ->
@@ -118,7 +119,7 @@ handle_cast(_Msg, State) ->
 handle_info(log_stats, #state { logging_frequency = NextLogging } = State) ->
     NDampened = edge_core_traffic_monitor:get_dampened_ip_masks(),
     {Blocked, Allowed, Whitelisted} = log_stats(),
-    lager:info("dampened ips: ~p - queries ~p/~p/~p~n", [NDampened, Blocked, Allowed, Whitelisted]),
+    stats_log("dampened ips: ~p - queries ~p/~p/~p~n", [NDampened, Blocked, Allowed, Whitelisted]),
     timer:send_after(NextLogging, log_stats),
     {noreply, State};
 
@@ -164,3 +165,13 @@ open_file(no_file) ->
 open_file(FileName) ->
     {ok, LogFile} = file:open(FileName, [write]),
     LogFile.
+
+-ifdef(TEST).
+stats_log(Msg, Args) ->
+    lager:warning("SUP? ~p ~p", [Msg, Args]),
+    logging_receiver ! {log, Msg, Args}.
+-else.
+stats_log(Msg, Args) ->
+    lager:notice("LOL ~p", [edgedns_SUITE:all()]),
+    lager:notice(Msg, Args).
+-endif.

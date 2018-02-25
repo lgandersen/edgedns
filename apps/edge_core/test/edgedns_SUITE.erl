@@ -56,13 +56,6 @@ suite() ->
 
 groups() ->
     [
-        %% TODO: group definitions here e.g.
-        %% {crud, [], [
-        %%          t_create_resource,
-        %%          t_read_resource,
-        %%          t_update_resource,
-        %%          t_delete_resource
-        %%         ]}
         {edgedns, [], [t_edgedns_start_and_shutdown,
                        t_edgedns_a,
                        t_edgedns_aaaa,
@@ -152,15 +145,11 @@ t_edgedns_many_ips(_Config) ->
 t_edgedns_nonexisting_domain(_Config) ->
     init_edgedns_and_dummydns(),
     ok = resolve_and_verify("ido.notexist", a).
-%log/query.statistics.log
--define(STATS_LOG, "log/query_stats.log").
 
 t_edgedns_blocked(_Config) ->
     init_edgedns_and_dummydns([{blocking_threshold, 10}]),
     edge_dns_lookup("bornhack.dk", a),
-    timer:sleep(1000),
-    LastLine = get_last_line(?STATS_LOG),
-    {_start, _end} = binary:match(LastLine, <<"dampening activated.">>),
+    ok = expected_log("~p dampening activated.~n", [{127,0,0,1}]),
     ok.
 
 t_edgedns_unblocked(_Config) ->
@@ -168,9 +157,8 @@ t_edgedns_unblocked(_Config) ->
                                {decay_rate, 0.50},
                                {whitelist, []}]),
     edge_dns_lookup("bornhack.dk", a),
-    timer:sleep(2500),
-    LastLine = get_last_line(?STATS_LOG),
-    {_start, _end} = binary:match(LastLine, <<"dampening removed.">>),
+    ok = expected_log("~p dampening activated.~n", [{127,0,0,1}]),
+    ok = expected_log("~p dampening removed.~n", [{127,0,0,1}]),
     ok.
 
 t_edgedns_whitelisted(_Config) ->
@@ -198,9 +186,7 @@ t_edgedns_stats_log_whitelisted(_Config) ->
     Listener ! {udp, no_socket, {13,37,13,37}, no_port, ?TEST_QUERY},
     Listener ! {udp, no_socket, {13,37,13,37}, no_port, ?TEST_QUERY},
     Listener ! {udp, no_socket, {13,37,13,37}, no_port, ?TEST_QUERY},
-    timer:sleep(2500),
-    LastLine = get_last_line(?STATS_LOG),
-    {_start, _end} = binary:match(LastLine, <<"dampened ips: 0 - queries 0/0/6">>),
+    expected_log("dampened ips: ~p - queries ~p/~p/~p~n", [0,0,0,6]),
     ok.
 
 t_edgedns_stats_log_dampened(_Config) ->
@@ -217,9 +203,7 @@ t_edgedns_stats_log_dampened(_Config) ->
     Listener ! {udp, no_socket, {10,0,13,37}, no_port, ?TEST_QUERY},
     Listener ! {udp, no_socket, {10,0,13,37}, no_port, ?TEST_QUERY},
     Listener ! {udp, no_socket, {10,0,13,37}, no_port, ?TEST_QUERY},
-    timer:sleep(2500),
-    LastLine = get_last_line(?STATS_LOG),
-    {_start, _end} = binary:match(LastLine, <<"dampened ips: 2 - queries 0/6/0">>),
+    expected_log("dampened ips: ~p - queries ~p/~p/~p~n", [2,0,6,0]),
     ok.
 
 t_edgedns_stats_log_allowed(_Config) ->
@@ -236,9 +220,7 @@ t_edgedns_stats_log_allowed(_Config) ->
     Listener ! {udp, no_socket, {10,0,13,37}, no_port, ?TEST_QUERY},
     Listener ! {udp, no_socket, {10,0,13,37}, no_port, ?TEST_QUERY},
     Listener ! {udp, no_socket, {10,0,13,37}, no_port, ?TEST_QUERY},
-    timer:sleep(2500),
-    LastLine = get_last_line(?STATS_LOG),
-    {_start, _end} = binary:match(LastLine, <<"dampened ips: 0 - queries 0/6/0">>),
+    expected_log("dampened ips: ~p - queries ~p/~p/~p~n", [0,6,0,0]),
     ok.
 
 
@@ -276,12 +258,6 @@ dummy_dns_server(Requests2Response) ->
             dummy_dns_server(Requests2Response)
     end.
 
-
-%% @private
-get_last_line(FilePath) ->
-    {ok, LogRaw} = file:read_file(FilePath),
-    [_, LastLine | _Rest] = lists:reverse(binary:split(LogRaw, <<"\n">>, [global])),
-    LastLine.
 
 %% @private
 verify_dns_response(Response, ExpectedResponse) ->
@@ -327,6 +303,7 @@ init_edgedns_and_dummydns() ->
     init_edgedns_and_dummydns([]).
 
 init_edgedns_and_dummydns(EdgeDNSOpts) ->
+    start_logging_receiver(),
     ok = set_env_variables(EdgeDNSOpts),
     spawn_link(fun () -> start_dummy_dns_server() end),
     start_edgedns_processes().
@@ -360,3 +337,27 @@ shutdown_edgedns_processe({Listener, Logger, Monitor}) ->
     exit(Listener, normal),
     exit(Logger, normal),
     exit(Monitor, normal).
+
+%% @private
+start_logging_receiver() ->
+    TestProces = self(),
+    Pid = spawn_link(fun() -> logging_receiver(TestProces) end),
+    register(logging_receiver, Pid),
+    ok.
+
+logging_receiver(TestProces) ->
+    receive
+        Log ->
+            TestProces ! Log,
+            logging_receiver(TestProces)
+    end.
+
+expected_log(Msg, Args) ->
+    receive
+        {log, Msg, Args} ->
+            ok;
+
+        SomethingElse ->
+            lager:warning("Weird! I received ~p instead of ~p and ~p", [SomethingElse, Msg, Args]),
+            error
+    end.

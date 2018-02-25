@@ -150,7 +150,7 @@ get_dampened_ip_masks__(_, AccIn) ->
 write_down_scoring(DecayRate, Threshold) ->
     Limit = 10000,
     done = write_down_scoring(ets:match(?SCORE_TABLE, '$1', Limit), DecayRate, Threshold),
-    lager:notice("Number of ip addresses in table after writedown: ~p", [length(ets:tab2list(?SCORE_TABLE))]).
+    lager:info("Number of ip addresses in table after writedown: ~p", [length(ets:tab2list(?SCORE_TABLE))]).
 
 write_down_scoring({Rows, Continuation}, DecayRate, Threshold) ->
     UpdatedRows = lists:map(

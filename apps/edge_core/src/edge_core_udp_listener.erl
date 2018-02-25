@@ -120,7 +120,7 @@ code_change(_OldVersion, State, _Extra) ->
 open_listening_socket(IP, Port, Active) ->
     case gen_udp:open(Port, [binary, inet, {ip, IP}, {active, Active}, {reuseaddr, true}]) of
         {ok, _Socket} = Ok ->
-            lager:notice("Listening to incoming DNS requests on ip ~p port ~p", [IP, Port]),
+            lager:info("Listening to incoming DNS requests on ip ~p port ~p", [IP, Port]),
             Ok;
         {error, _} = Error ->
             Error
