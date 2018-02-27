@@ -4,6 +4,9 @@
 %%% license that can be found in the LICENSE file.
 %%%
 -module(edge_core_config).
+-include_lib("kernel/include/file.hrl").
+
+-define(CONFIGURE(Key, Value), application:set_env(edge_core, Key, Value, [{persistent, true}])).
 
 %% API.
 -export([listeners/0,
@@ -15,7 +18,8 @@
          enable_dampening/0,
          whitelist/0,
          silent/0,
-         stats_log_frequencey/0
+         stats_log_frequency/0,
+         load_config/0
         ]).
 
 -spec enable_dampening() -> boolean().
@@ -57,9 +61,77 @@ whitelist() ->
     Whitelist = get_value(whitelist, []),
     [parse_address(Address) || Address <- Whitelist].
 
--spec stats_log_frequencey() -> pos_integer().
-stats_log_frequencey() ->
-    round(1000 * get_value(stats_log_frequencey, 60)).
+-spec stats_log_frequency() -> pos_integer().
+stats_log_frequency() ->
+    round(1000 * get_value(stats_log_frequency, 60)).
+
+
+load_config() ->
+    Fname = get_value(yaml_config_name, "edgedns_config.yml"),
+    Paths = get_value(yaml_config_paths, []),
+    Config = open_and_return(Paths, Fname),
+    lists:map(fun parse_config/1, Config),
+    application:ensure_all_started(lager).
+
+%% @private
+parse_config({"enable_dampening", Value}) ->
+    ?CONFIGURE(enable_dampening, Value);
+
+parse_config({"port_resolver_range",[{"start",Start},{"end",End}]}) ->
+    ?CONFIGURE(port_range_resolvers, {Start, End});
+
+parse_config({"silent", Value}) ->
+    ?CONFIGURE(silent, Value);
+
+parse_config({"blocking_threshold", Value}) ->
+    ?CONFIGURE(blocking_threshold, Value);
+
+parse_config({"decay_rate", Value}) ->
+    ?CONFIGURE(decay_rate, Value);
+
+parse_config({"whitelist", Value}) ->
+    ?CONFIGURE(whitelist, Value);
+
+parse_config({"stats_log_frequency", Value}) ->
+    ?CONFIGURE(stats_log_frequency, Value);
+
+parse_config({"stats_log_file", FileLocation}) ->
+    Handlers = [
+            {lager_console_backend, info}, %% Perhaps this should only be during testing
+            {lager_file_backend, [
+                {file, FileLocation},
+                {level, '=notice'}
+            ]}
+        ],
+    application:set_env(lager, handlers, Handlers, [{persistent, true}]);
+
+parse_config({"active_message_count", Value}) ->
+    ?CONFIGURE(active_message_count, Value);
+
+parse_config({"listeners", Value}) ->
+    Listeners = [{IP, Port} || [{"ip",IP}, {"port", Port}] <- Value],
+    ?CONFIGURE(listeners, Listeners);
+
+parse_config({"nameserver",[{"ip",IP},{"port",Port}]}) ->
+    ?CONFIGURE(nameserver, {IP, Port});
+
+parse_config(UnkownConfigurationParam) ->
+    lager:warning("Did not understand what ~p is supposed to configure.", [UnkownConfigurationParam]).
+
+%% @private
+open_and_return([Path | Rest], Fname) ->
+    File = filename:join([Path, Fname]),
+    case file:read_file_info(File) of
+        {error, enoent} ->
+            open_and_return(Rest, Fname);
+
+        {ok, _} ->
+            [Config] = yamerl_constr:file(File),
+            Config
+    end;
+
+open_and_return([], _Fname) ->
+    [].
 
 %% @private
 -spec parse_address(string()) -> inet:ip().
@@ -73,6 +145,7 @@ parse_address_({ok, IPv4}, _) ->
 
 parse_address_(_, {ok, IPv6}) ->
     IPv6.
+
 
 %% @private
 -spec get_value(Key, Default) -> term()
