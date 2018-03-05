@@ -34,6 +34,7 @@
          t_edgedns_blocked/1,
          t_edgedns_unblocked/1,
          t_edgedns_whitelisted/1,
+         t_edgedns_silent/1,
          t_edgedns_stats_log_whitelisted/1,
          t_edgedns_stats_log_dampened/1,
          t_edgedns_stats_log_allowed/1
@@ -67,6 +68,7 @@ groups() ->
                        t_edgedns_blocked,
                        t_edgedns_unblocked,
                        t_edgedns_whitelisted,
+                       t_edgedns_silent,
                        t_edgedns_stats_log_whitelisted,
                        t_edgedns_stats_log_dampened,
                        t_edgedns_stats_log_allowed
@@ -169,6 +171,12 @@ t_edgedns_whitelisted(_Config) ->
     resolve_and_verify("ido.notexist", a),
     ok.
 
+t_edgedns_silent(_Config) ->
+    init_edgedns_and_dummydns([{silent, true}]),
+    [EdgeDNS]= edge_core_config:listeners(),
+    {error, timeout} = inet_res:resolve("bornhack.dk", in, a, [{nameservers, [EdgeDNS]}]),
+    ok.
+
 %% Aproximate score of this query (a bornhack.dk) is 3000.
 -define(TEST_QUERY, <<0,1,1,0,0,1,0,0,0,0,0,0,8,98,111,114,110,104,97,99,107,2,100,107,0,0,1,0,1>>).
 
@@ -177,7 +185,7 @@ t_edgedns_stats_log_whitelisted(_Config) ->
                                                   {blocking_threshold, 4000},
                                                   {silent, true},
                                                   {decay_rate, 0.99},
-                                                  {stats_log_frequencey, 1},
+                                                  {stats_log_frequency, 1},
                                                   {whitelist, ["127.0.0.1", "13.37.13.37"]}
                                                  ]),
     Listener ! {udp, no_socket, {127,0,0,1}, no_port, ?TEST_QUERY},
@@ -194,7 +202,7 @@ t_edgedns_stats_log_dampened(_Config) ->
                                                   {blocking_threshold, 4000},
                                                   {silent, true},
                                                   {decay_rate, 0.99},
-                                                  {stats_log_frequencey, 1},
+                                                  {stats_log_frequency, 1},
                                                   {whitelist, []}
                                                  ]),
     Listener ! {udp, no_socket, {127,0,0,1}, no_port, ?TEST_QUERY},
@@ -211,7 +219,7 @@ t_edgedns_stats_log_allowed(_Config) ->
                                                   {blocking_threshold, 9999999},
                                                   {silent, true},
                                                   {decay_rate, 0.99},
-                                                  {stats_log_frequencey, 1},
+                                                  {stats_log_frequency, 1},
                                                   {whitelist, []}
                                                  ]),
     Listener ! {udp, no_socket, {127,0,0,1}, no_port, ?TEST_QUERY},
@@ -314,6 +322,7 @@ set_env_variables() ->
 
 set_env_variables(Options) ->
     Defaults = [
+                {listeners, [{"127.0.0.1", 5331}]},
                 {nameserver, {"127.0.0.1", 8538}}
                ],
     lists:foreach(

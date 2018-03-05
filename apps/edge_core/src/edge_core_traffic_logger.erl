@@ -78,7 +78,7 @@ dampening_removed(IP) ->
 %%%===================================================================
 %% @private
 init([]) ->
-    LoggingFrequency = edge_core_config:stats_log_frequencey(),
+    LoggingFrequency = edge_core_config:stats_log_frequency(),
     timer:send_after(LoggingFrequency, log_stats),
     {ok, #state { logging_frequency = LoggingFrequency,
                   query_log         = open_file(?QUERY_LOG)
@@ -91,8 +91,6 @@ handle_call(_Request, _From, State) ->
 
 %% @private
 handle_cast({log_query, {IP, Query, Response}}, #state { query_log = LogFile } = State) ->
-    %% FIXME this should be enabled through a macro such that no query-parsing is
-    %% taking place unless this full logging is turned on
     case inet_dns:decode(Response) of
         {ok, Data} ->
             [QueryType] = extract_query_type(Data),
@@ -168,10 +166,8 @@ open_file(FileName) ->
 
 -ifdef(TEST).
 stats_log(Msg, Args) ->
-    lager:warning("SUP? ~p ~p", [Msg, Args]),
     logging_receiver ! {log, Msg, Args}.
 -else.
 stats_log(Msg, Args) ->
-    lager:notice("LOL ~p", [edgedns_SUITE:all()]),
     lager:notice(Msg, Args).
 -endif.
