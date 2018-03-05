@@ -1,0 +1,53 @@
+################ DNS-relaying options #############################
+# List of IP/ports where we listen for incoming DNS queries
+# Note that only UDP is supported at the moment
+listeners:
+     - ip:   127.0.0.1
+       port: 5331
+
+     ## You can add multpile listening sockets (and ipv6)
+     #- ip: "fe80:beef::"
+     #  port: 53
+
+# Upstream DNS Server.
+nameserver:
+    ip:     127.0.0.1
+    port:   53
+
+# Range of ports used when communicating with upstream DNS-server
+port_resolver_range:
+    start:  5333
+    end:    5335
+
+# Should EdgeDNS silently drop DNS responses (used for testing)
+silent: false
+
+
+############### Dampening options #############################
+# Whether or not to block queries based on their scores.
+# Note that logging reports potentially blocked peers as if they were.
+enable_dampening: true
+
+# Number of points that triggers blocking
+blocking_threshold: 99999999999
+
+# Decay rate of traffic-scoring
+decay_rate: 0.50
+
+# Blocking exemption list (empty if omitted)
+whitelist:
+    - 127.0.0.1
+    - 127.0.0.2
+
+
+################ Misc options #############################
+# Interval in seconds (int/float) where EdgeDNS logs stats
+# about queries made since last log entry
+stats_log_frequency: 60
+
+# Query stats logging
+stats_log_file: ./testing_stats.log
+
+# Number of messages we can handle being
+# delivered to our inbox from the UDP listener.
+active_message_count: 10

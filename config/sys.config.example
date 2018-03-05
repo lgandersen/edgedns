@@ -1,6 +1,7 @@
 [
     % EdgeDNS Core.
     {edge_core, [
+        %%%%%%%%%%%%%%%% DNS-relaying options %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         % List of IP/ports where we listen for incoming DNS queries
         % Note that only UDP is supported at the moment
         % IPv4 example: {listeners, [{"127.0.0.1", 53}]}
@@ -9,10 +10,21 @@
         %                            {"127.0.0.1", 53},
         %                            {"fe80:beef::", 53}
         %                            ]}
-        {listeners, [{"127.0.0.1", 5331}]},
+        {listeners, [{"127.0.0.1", 53}]},
+
+        % Upstream DNS Server.
+        {nameserver, {"127.0.0.1", 53}},
 
         %% Range of ports used when communicating with upstream DNS-server
-        {port_range_resolvers, {5333, 5335}},
+        {port_range_resolvers, {5300, 5305}},
+
+        %% Should EdgeDNS silently drop DNS responses (used for testing)
+        {silent, false},
+
+        %%%%%%%%%%%%%%%% Dampening options %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        %% Wheter or not to block queries based on their scores.
+        %% Note that logging reports potentially blocked peers as if they were.
+        {enable_dampening, true},
 
         %% Number of points that triggers blocking
         {blocking_threshold, 99999999999999999},
@@ -20,26 +32,30 @@
         %% Decay rate of traffic-scoring
         {decay_rate, 0.50},
 
-        %% Should EdgeDNS silently drop DNS responses (used for testing)
-        {silent, true},
+        %% Blocking exemption list (empty if omitted)
+        %{whitelist, ["127.0.0.1"]},
 
-        %% Do not actually block queries if the source ip have exceed the blocking_threshold
-        %% The stats logging should log as if they were blocked (used for testing)
-        {enable_dampening, true},
-
-        %% Blocking exemption list
-        {whitelist, ["1.3.3.7"]},
-
-        %% Frequency (seconds) between stats logging
-        {stats_log_frequencey, 60},
+        %%%%%%%%%%%%%%%% Misc options %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        %% Interval in seconds (int/float) where EdgeDNS logs stats
+        %% about queries made since last log entry
+        {stats_log_frequency, 60},
 
         % Number of messages we can handle being
         % delivered to our inbox from the UDP
         % listener.
         {active_message_count, 10},
 
-        % Upstream DNS Server.
-        {nameserver, {"89.233.43.71", 53}}
+        %% Name of the yaml-config
+        {yaml_config_name, "edgedns_config.yml"},
+
+        %% Prioritized list of paths for the configuration file
+        {yaml_config_paths, [
+            "/does/not/exist/",
+            "./",
+            "~/.edgedns/",
+            "/usr/local/etc/",
+            "/etc/"
+            ]}
         ]},
 
     % Lager configuration.
@@ -50,46 +66,14 @@
         % Log handlers configuration.
         {handlers, [
             % Console logging.
-            {lager_console_backend, notice},
+            {lager_console_backend, info},
 
-            % Error file logging.
+            %% Query stats logging (used for the 'stats_log_file' entry
+            %% in the YAML-configuration format
             {lager_file_backend, [
-                {file, "log/error.log"},
-                {level, error},
-                {date, "$D0"},
-                {count, 5}
-            ]},
-
-            % Console file logging.
-            {lager_file_backend, [
-                {file, "log/console.log"},
-                {level, notice},
-                {date, "$D0"},
-                {count, 5}
+                {file, "log/query_stats.log"},
+                {level, '=notice'}
             ]}
-        ]},
-
-        {extra_sinks,
-           [
-            {stats_log_lager_event,
-             [{handlers,
-               [{lager_console_backend, info},
-               {lager_file_backend,
-                 [{file, "log/stats.log"},
-                  {level, info}
-                 ]
-                }]
-            }]},
-            {query_log_lager_event,
-             [{handlers,
-               [{lager_console_backend, info},
-                {lager_file_backend, [
-                    {file, "log/queries.log"},
-                    {level, info}
-                    ]}
-                ]}
-              ]
-            }
         ]}
     ]},
 
